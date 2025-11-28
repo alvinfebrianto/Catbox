@@ -179,9 +179,12 @@ if (-not $Files -and -not $Urls) {
             $openFileDialog.Multiselect = $true
             $openFileDialog.Filter = "Image files (*.jpg;*.jpeg;*.png;*.gif;*.bmp)|*.jpg;*.jpeg;*.png;*.gif;*.bmp|All files (*.*)|*.*"
             if ($openFileDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-                $script:selectedFiles = $openFileDialog.FileNames
-                $fileListBox.Items.Clear()
-                $openFileDialog.FileNames | ForEach-Object { $fileListBox.Items.Add($_) }
+                $openFileDialog.FileNames | ForEach-Object {
+                    if ($_ -notin $script:selectedFiles) {
+                        $script:selectedFiles += $_
+                        $fileListBox.Items.Add($_)
+                    }
+                }
             }
         })
         $form.Controls.Add($fileButton)
