@@ -32,7 +32,7 @@ function Upload-FileToCatbox {
     param(
         [Parameter(Mandatory=$true)] [string]$Path
     )
-    if (-not (Test-Path -Path $Path)) {
+    if (-not (Test-Path -LiteralPath $Path)) {
         throw "File not found: $Path"
     }
     Write-Verbose "Uploading file: $Path"
