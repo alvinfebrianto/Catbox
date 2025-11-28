@@ -163,90 +163,94 @@ function Invoke-CatboxUpload {
 # Main
 if (-not $Files -and -not $Urls) {
     # Show GUI
-    Add-Type -AssemblyName System.Windows.Forms
-    $selectedFiles = @()
-    $form = New-Object System.Windows.Forms.Form
-    $form.Text = "Catbox Uploader"
-    $form.Size = New-Object System.Drawing.Size(400,500)
+    try {
+        Add-Type -AssemblyName System.Windows.Forms
+        $selectedFiles = @()
+        $form = New-Object System.Windows.Forms.Form
+        $form.Text = "Catbox Uploader"
+        $form.Size = New-Object System.Drawing.Size(400,500)
 
-    # File button
-    $fileButton = New-Object System.Windows.Forms.Button
-    $fileButton.Text = "Select Files"
-    $fileButton.Location = New-Object System.Drawing.Point(10,10)
-    $fileButton.Add_Click({
-        $openFileDialog = New-Object System.Windows.Forms.OpenFileDialog
-        $openFileDialog.Multiselect = $true
-        $openFileDialog.Filter = "Image files (*.jpg;*.jpeg;*.png;*.gif;*.bmp)|*.jpg;*.jpeg;*.png;*.gif;*.bmp|All files (*.*)|*.*"
-        if ($openFileDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-            $script:selectedFiles = $openFileDialog.FileNames
-            $fileListBox.Items.Clear()
-            $openFileDialog.FileNames | ForEach-Object { $fileListBox.Items.Add($_) }
-        }
-    })
-    $form.Controls.Add($fileButton)
+        # File button
+        $fileButton = New-Object System.Windows.Forms.Button
+        $fileButton.Text = "Select Files"
+        $fileButton.Location = New-Object System.Drawing.Point(10,10)
+        $fileButton.Add_Click({
+            $openFileDialog = New-Object System.Windows.Forms.OpenFileDialog
+            $openFileDialog.Multiselect = $true
+            $openFileDialog.Filter = "Image files (*.jpg;*.jpeg;*.png;*.gif;*.bmp)|*.jpg;*.jpeg;*.png;*.gif;*.bmp|All files (*.*)|*.*"
+            if ($openFileDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+                $script:selectedFiles = $openFileDialog.FileNames
+                $fileListBox.Items.Clear()
+                $openFileDialog.FileNames | ForEach-Object { $fileListBox.Items.Add($_) }
+            }
+        })
+        $form.Controls.Add($fileButton)
 
-    # ListBox for selected files
-    $fileListBox = New-Object System.Windows.Forms.ListBox
-    $fileListBox.Location = New-Object System.Drawing.Point(10,40)
-    $fileListBox.Size = New-Object System.Drawing.Size(360,100)
-    $form.Controls.Add($fileListBox)
+        # ListBox for selected files
+        $fileListBox = New-Object System.Windows.Forms.ListBox
+        $fileListBox.Location = New-Object System.Drawing.Point(10,40)
+        $fileListBox.Size = New-Object System.Drawing.Size(360,100)
+        $form.Controls.Add($fileListBox)
 
-    # URL label and text box
-    $urlLabel = New-Object System.Windows.Forms.Label
-    $urlLabel.Text = "URLs (comma-separated):"
-    $urlLabel.Location = New-Object System.Drawing.Point(10,150)
-    $form.Controls.Add($urlLabel)
+        # URL label and text box
+        $urlLabel = New-Object System.Windows.Forms.Label
+        $urlLabel.Text = "URLs (comma-separated):"
+        $urlLabel.Location = New-Object System.Drawing.Point(10,150)
+        $form.Controls.Add($urlLabel)
 
-    $urlTextBox = New-Object System.Windows.Forms.TextBox
-    $urlTextBox.Location = New-Object System.Drawing.Point(10,170)
-    $urlTextBox.Size = New-Object System.Drawing.Size(360,20)
-    $form.Controls.Add($urlTextBox)
+        $urlTextBox = New-Object System.Windows.Forms.TextBox
+        $urlTextBox.Location = New-Object System.Drawing.Point(10,170)
+        $urlTextBox.Size = New-Object System.Drawing.Size(360,20)
+        $form.Controls.Add($urlTextBox)
 
-    # Title
-    $titleLabel = New-Object System.Windows.Forms.Label
-    $titleLabel.Text = "Title:"
-    $titleLabel.Location = New-Object System.Drawing.Point(10,200)
-    $form.Controls.Add($titleLabel)
+        # Title
+        $titleLabel = New-Object System.Windows.Forms.Label
+        $titleLabel.Text = "Title:"
+        $titleLabel.Location = New-Object System.Drawing.Point(10,200)
+        $form.Controls.Add($titleLabel)
 
-    $titleTextBox = New-Object System.Windows.Forms.TextBox
-    $titleTextBox.Text = ""
-    $titleTextBox.Location = New-Object System.Drawing.Point(10,220)
-    $titleTextBox.Size = New-Object System.Drawing.Size(360,20)
-    $form.Controls.Add($titleTextBox)
+        $titleTextBox = New-Object System.Windows.Forms.TextBox
+        $titleTextBox.Text = ""
+        $titleTextBox.Location = New-Object System.Drawing.Point(10,220)
+        $titleTextBox.Size = New-Object System.Drawing.Size(360,20)
+        $form.Controls.Add($titleTextBox)
 
-    # Description
-    $descLabel = New-Object System.Windows.Forms.Label
-    $descLabel.Text = "Description:"
-    $descLabel.Location = New-Object System.Drawing.Point(10,250)
-    $form.Controls.Add($descLabel)
+        # Description
+        $descLabel = New-Object System.Windows.Forms.Label
+        $descLabel.Text = "Description:"
+        $descLabel.Location = New-Object System.Drawing.Point(10,250)
+        $form.Controls.Add($descLabel)
 
-    $descTextBox = New-Object System.Windows.Forms.TextBox
-    $descTextBox.Location = New-Object System.Drawing.Point(10,270)
-    $descTextBox.Size = New-Object System.Drawing.Size(360,20)
-    $form.Controls.Add($descTextBox)
+        $descTextBox = New-Object System.Windows.Forms.TextBox
+        $descTextBox.Location = New-Object System.Drawing.Point(10,270)
+        $descTextBox.Size = New-Object System.Drawing.Size(360,20)
+        $form.Controls.Add($descTextBox)
 
-    # Upload button
-    $uploadButton = New-Object System.Windows.Forms.Button
-    $uploadButton.Text = "Upload"
-    $uploadButton.Location = New-Object System.Drawing.Point(10,300)
-    $uploadButton.Add_Click({
-        $urls = if ($urlTextBox.Text) { $urlTextBox.Text -split ',' | ForEach-Object { $_.Trim() } } else { $null }
-        $output = Invoke-CatboxUpload -Files $script:selectedFiles -Urls $urls -Title $titleTextBox.Text -Description $descTextBox.Text
-        $outputTextBox.Text = $output -join "`r`n"
-        # Also print to console
-        $output | ForEach-Object { Write-Host $_ }
-    })
-    $form.Controls.Add($uploadButton)
+        # Upload button
+        $uploadButton = New-Object System.Windows.Forms.Button
+        $uploadButton.Text = "Upload"
+        $uploadButton.Location = New-Object System.Drawing.Point(10,300)
+        $uploadButton.Add_Click({
+            $urls = if ($urlTextBox.Text) { $urlTextBox.Text -split ',' | ForEach-Object { $_.Trim() } } else { $null }
+            $output = Invoke-CatboxUpload -Files $script:selectedFiles -Urls $urls -Title $titleTextBox.Text -Description $descTextBox.Text
+            $outputTextBox.Text = $output -join "`r`n"
+            # Also print to console
+            $output | ForEach-Object { Write-Host $_ }
+        })
+        $form.Controls.Add($uploadButton)
 
-    # Output text box
-    $outputTextBox = New-Object System.Windows.Forms.TextBox
-    $outputTextBox.Multiline = $true
-    $outputTextBox.ScrollBars = "Vertical"
-    $outputTextBox.Location = New-Object System.Drawing.Point(10,330)
-    $outputTextBox.Size = New-Object System.Drawing.Size(360,100)
-    $form.Controls.Add($outputTextBox)
+        # Output text box
+        $outputTextBox = New-Object System.Windows.Forms.TextBox
+        $outputTextBox.Multiline = $true
+        $outputTextBox.ScrollBars = "Vertical"
+        $outputTextBox.Location = New-Object System.Drawing.Point(10,330)
+        $outputTextBox.Size = New-Object System.Drawing.Size(360,100)
+        $form.Controls.Add($outputTextBox)
 
-    $form.ShowDialog()
+        $form.ShowDialog()
+    } catch {
+        Write-Host "GUI Error: $_"
+    }
 } else {
     $output = Invoke-CatboxUpload -Files $Files -Urls $Urls -Title $Title -Description $Description -VerboseOutput:$VerboseOutput
     $output | ForEach-Object { Write-Output $_ }
