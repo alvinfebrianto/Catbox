@@ -1,17 +1,13 @@
 <#
-catbox.ps1
-PowerShell helper for anonymous uploads and album creation to Catbox.moe
-
 Usage examples:
    .\catbox.ps1 -Files 'C:\path\a.png','C:\path\b.jpg' -Title 'My Album'
    .\catbox.ps1 -Urls 'https://example.com/img.png' -Title 'From URLs'
    .\catbox.ps1 -Files 'C:\a.png' -Urls 'https://example.com/img.png' -Title 'Mixed'
-   .\catbox.ps1  # Launches GUI for easy file selection
+   .\catbox.ps1  # Launches GUI
 
 Notes:
 - Anonymous: do NOT provide a userhash. Albums created anonymously cannot be edited or deleted.
 - Script outputs uploaded file URLs and the album URL.
-- Requires PowerShell 5+ (Windows 10+) and curl.exe (built-in on Windows 10 1803+).
 - GUI mode uses Windows Forms for file selection.
 #>
 
@@ -23,7 +19,7 @@ param(
     [string[]]$Urls,
 
     [Parameter(Mandatory=$false)]
-    [string]$Title = "PowerShell Album",
+    [string]$Title = "",
 
     [Parameter(Mandatory=$false)]
     [string]$Description = "",
@@ -213,7 +209,7 @@ if (-not $Files -and -not $Urls) {
     $form.Controls.Add($titleLabel)
 
     $titleTextBox = New-Object System.Windows.Forms.TextBox
-    $titleTextBox.Text = "PowerShell Album"
+    $titleTextBox.Text = ""
     $titleTextBox.Location = New-Object System.Drawing.Point(10,220)
     $titleTextBox.Size = New-Object System.Drawing.Size(360,20)
     $form.Controls.Add($titleTextBox)
