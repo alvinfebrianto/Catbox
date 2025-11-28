@@ -233,6 +233,8 @@ if (-not $Files -and -not $Urls) {
         $urls = if ($urlTextBox.Text) { $urlTextBox.Text -split ',' | ForEach-Object { $_.Trim() } } else { $null }
         $output = Invoke-CatboxUpload -Files $script:selectedFiles -Urls $urls -Title $titleTextBox.Text -Description $descTextBox.Text
         $outputTextBox.Text = $output -join "`r`n"
+        # Also print to console
+        $output | ForEach-Object { Write-Host $_ }
     })
     $form.Controls.Add($uploadButton)
 
