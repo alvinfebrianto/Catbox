@@ -103,8 +103,10 @@ function Invoke-CatboxUpload {
             try {
                 $u = Upload-FileToCatbox -Path $f
                 $uploadedUrls += $u
+                Write-Host "Uploaded: $u"
                 if ($VerboseOutput) { $output += "Uploaded: $u" }
             } catch {
+                Write-Host "Error: $($_.Exception.Message)"
                 $output += "Error: $($_.Exception.Message)"
             }
         }
@@ -115,14 +117,17 @@ function Invoke-CatboxUpload {
             try {
                 $r = Upload-UrlToCatbox -Url $u
                 $uploadedUrls += $r
+                Write-Host "Uploaded URL: $r"
                 if ($VerboseOutput) { $output += "Uploaded URL: $r" }
             } catch {
+                Write-Host "Error: $($_.Exception.Message)"
                 $output += "Error: $($_.Exception.Message)"
             }
         }
     }
 
     if ($uploadedUrls.Count -eq 0) {
+        Write-Host "No uploads completed. Exiting."
         $output += "No uploads completed. Exiting."
         return $output
     }
@@ -135,6 +140,7 @@ function Invoke-CatboxUpload {
             $basename = [System.IO.Path]::GetFileName($uri.LocalPath)
             if ($basename -and -not ($fileNames -contains $basename)) { $fileNames += $basename }
         } catch {
+            Write-Host "Warning: Could not parse returned URL: $u"
             $output += "Warning: Could not parse returned URL: $u"
         }
     }
@@ -143,19 +149,27 @@ function Invoke-CatboxUpload {
         $albumResp = Create-AnonymousAlbum -FileNames $fileNames -Title $Title -Desc $Description
         # If the API returns a short code or full URL, print helpful messages
         if ($albumResp -match '^https?://') {
+            Write-Host "Album URL: $albumResp"
             $output += "Album URL: $albumResp"
         } else {
             # assume short code
+            Write-Host "Album short code: $albumResp"
+            Write-Host "Album URL: https://catbox.moe/album/$albumResp"
             $output += "Album short code: $albumResp"
             $output += "Album URL: https://catbox.moe/album/$albumResp"
         }
     } catch {
+        Write-Host "Error: $($_.Exception.Message)"
         $output += "Error: $($_.Exception.Message)"
     }
 
     # Print list of uploaded URLs
+    Write-Host "Uploaded files:"
     $output += "Uploaded files:"
-    $uploadedUrls | ForEach-Object { $output += "- $_" }
+    $uploadedUrls | ForEach-Object {
+        Write-Host "- $_"
+        $output += "- $_"
+    }
 
     return $output
 }
@@ -237,8 +251,6 @@ if (-not $Files -and -not $Urls) {
             $urls = if ($urlTextBox.Text) { $urlTextBox.Text -split ',' | ForEach-Object { $_.Trim() } } else { $null }
             $output = Invoke-CatboxUpload -Files $script:selectedFiles -Urls $urls -Title $titleTextBox.Text -Description $descTextBox.Text
             $outputTextBox.Text = $output -join "`r`n"
-            # Also print to console
-            $output | ForEach-Object { Write-Host $_ }
         })
         $form.Controls.Add($uploadButton)
 
