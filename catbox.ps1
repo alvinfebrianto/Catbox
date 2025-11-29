@@ -163,13 +163,7 @@ function Invoke-CatboxUpload {
         $output += "Error: $($_.Exception.Message)"
     }
 
-    # Print list of uploaded URLs
-    Write-Host "Uploaded files:"
-    $output += "Uploaded files:"
-    $uploadedUrls | ForEach-Object {
-        Write-Host "- $_"
-        $output += "- $_"
-    }
+
 
     return $output
 }
