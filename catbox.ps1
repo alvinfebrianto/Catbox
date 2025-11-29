@@ -37,9 +37,9 @@ function Upload-FileToCatbox {
     }
     Write-Verbose "Uploading file: $Path"
     try {
-        $resp = & curl.exe -s -F reqtype=fileupload -F "fileToUpload=@$Path" https://catbox.moe/user/api.php
+        $resp = & curl.exe -s --fail-with-body -F reqtype=fileupload -F "fileToUpload=@`"$Path`"" https://catbox.moe/user/api.php
         if ($LASTEXITCODE -ne 0) {
-            throw "curl failed"
+            throw "curl failed: $resp"
         }
         $url = $resp.Trim()
         return $url
@@ -54,9 +54,9 @@ function Upload-UrlToCatbox {
     )
     Write-Verbose "Requesting URL upload: $Url"
     try {
-        $resp = & curl.exe -s -F reqtype=urlupload -F url=$Url https://catbox.moe/user/api.php
+        $resp = & curl.exe -s --fail-with-body -F reqtype=urlupload -F url=$Url https://catbox.moe/user/api.php
         if ($LASTEXITCODE -ne 0) {
-            throw "curl failed"
+            throw "curl failed: $resp"
         }
         $res = $resp.Trim()
         return $res
@@ -77,9 +77,9 @@ function Create-AnonymousAlbum {
     $filesArg = ($FileNames -join ' ')
     Write-Verbose "Creating album with files: $filesArg"
     try {
-        $resp = & curl.exe -s -F reqtype=createalbum -F title="$Title" -F desc="$Description" -F files="$filesArg" https://catbox.moe/user/api.php
+        $resp = & curl.exe -s --fail-with-body -F reqtype=createalbum -F title="$Title" -F desc="$Description" -F files="$filesArg" https://catbox.moe/user/api.php
         if ($LASTEXITCODE -ne 0) {
-            throw "curl failed"
+            throw "curl failed: $resp"
         }
         return $resp.Trim()
     } catch {
