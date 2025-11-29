@@ -193,6 +193,10 @@ if (-not $Files -and -not $Urls) {
                         $fileListBox.Items.Add($_)
                     }
                 }
+                if ($titleTextBox.Text -eq "" -and $script:selectedFiles.Count -gt 0) {
+                    $folderPath = [System.IO.Path]::GetDirectoryName($script:selectedFiles[0])
+                    $titleTextBox.Text = [System.IO.Path]::GetFileName($folderPath)
+                }
             }
         })
         $form.Controls.Add($fileButton)
