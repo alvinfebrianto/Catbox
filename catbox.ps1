@@ -177,6 +177,8 @@ if (-not $Files -and -not $Urls) {
         $form = New-Object System.Windows.Forms.Form
         $form.Text = "Catbox Uploader"
         $form.Size = New-Object System.Drawing.Size(400,500)
+        $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::Sizable
+        $form.MinimumSize = New-Object System.Drawing.Size(400,500)
 
         # File button
         $fileButton = New-Object System.Windows.Forms.Button
@@ -205,6 +207,7 @@ if (-not $Files -and -not $Urls) {
         $fileListBox = New-Object System.Windows.Forms.ListBox
         $fileListBox.Location = New-Object System.Drawing.Point(10,40)
         $fileListBox.Size = New-Object System.Drawing.Size(360,100)
+        $fileListBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
         $form.Controls.Add($fileListBox)
 
         # URL label and text box
@@ -216,6 +219,7 @@ if (-not $Files -and -not $Urls) {
         $urlTextBox = New-Object System.Windows.Forms.TextBox
         $urlTextBox.Location = New-Object System.Drawing.Point(10,170)
         $urlTextBox.Size = New-Object System.Drawing.Size(360,20)
+        $urlTextBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
         $form.Controls.Add($urlTextBox)
 
         # Title
@@ -228,6 +232,7 @@ if (-not $Files -and -not $Urls) {
         $titleTextBox.Text = ""
         $titleTextBox.Location = New-Object System.Drawing.Point(10,220)
         $titleTextBox.Size = New-Object System.Drawing.Size(360,20)
+        $titleTextBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
         $form.Controls.Add($titleTextBox)
 
         # Description
@@ -239,6 +244,7 @@ if (-not $Files -and -not $Urls) {
         $descTextBox = New-Object System.Windows.Forms.TextBox
         $descTextBox.Location = New-Object System.Drawing.Point(10,270)
         $descTextBox.Size = New-Object System.Drawing.Size(360,20)
+        $descTextBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
         $form.Controls.Add($descTextBox)
 
         # Upload button
@@ -258,6 +264,7 @@ if (-not $Files -and -not $Urls) {
         $outputTextBox.ScrollBars = "Vertical"
         $outputTextBox.Location = New-Object System.Drawing.Point(10,330)
         $outputTextBox.Size = New-Object System.Drawing.Size(360,100)
+        $outputTextBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
         $form.Controls.Add($outputTextBox)
 
         $form.ShowDialog()
