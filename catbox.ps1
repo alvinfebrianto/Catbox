@@ -104,12 +104,8 @@ function Invoke-CatboxUpload {
             try {
                 $u = Upload-FileToCatbox -Path $f
                 $uploadedUrls += $u
-                if ($GuiMode) {
-                    $output += "Uploaded: $u"
-                } else {
-                    Write-Host "Uploaded: $u"
-                    if ($VerboseOutput) { $output += "Uploaded: $u" }
-                }
+                $output += "Uploaded: $u"
+                Write-Host "Uploaded: $u"
             } catch {
                 Write-Host "Error: $($_.Exception.Message)"
                 $output += "Error: $($_.Exception.Message)"
@@ -122,12 +118,8 @@ function Invoke-CatboxUpload {
             try {
                 $r = Upload-UrlToCatbox -Url $u
                 $uploadedUrls += $r
-                if ($GuiMode) {
-                    $output += "Uploaded URL: $r"
-                } else {
-                    Write-Host "Uploaded URL: $r"
-                    if ($VerboseOutput) { $output += "Uploaded URL: $r" }
-                }
+                $output += "Uploaded URL: $r"
+                Write-Host "Uploaded URL: $r"
             } catch {
                 Write-Host "Error: $($_.Exception.Message)"
                 $output += "Error: $($_.Exception.Message)"
