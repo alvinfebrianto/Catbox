@@ -257,7 +257,7 @@ if (-not $Files -and -not $Urls) {
             $output = Invoke-CatboxUpload -Files $script:selectedFiles -Urls $urls -Title $titleTextBox.Text -Description $descTextBox.Text -GuiMode
             $totalInputs = $script:selectedFiles.Count + $(if ($urls) { $urls.Count } else { 0 })
             $successfulUploads = ($output | Where-Object { $_ -match "^Uploaded" }).Count
-            $output += "Successfully uploaded $successfulUploads out of $totalInputs inputs."
+            $output = @("Successfully uploaded $successfulUploads out of $totalInputs inputs.") + $output
             $outputTextBox.Text = $output -join "`r`n"
         })
         $form.Controls.Add($uploadButton)
