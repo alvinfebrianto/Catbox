@@ -93,7 +93,8 @@ function Invoke-CatboxUpload {
         [string[]]$Urls,
         [string]$Title,
         [string]$Description,
-        [switch]$VerboseOutput
+        [switch]$VerboseOutput,
+        [switch]$GuiMode
     )
     $output = @()
     $uploadedUrls = @()
@@ -103,8 +104,12 @@ function Invoke-CatboxUpload {
             try {
                 $u = Upload-FileToCatbox -Path $f
                 $uploadedUrls += $u
-                Write-Host "Uploaded: $u"
-                if ($VerboseOutput) { $output += "Uploaded: $u" }
+                if ($GuiMode) {
+                    $output += "Uploaded: $u"
+                } else {
+                    Write-Host "Uploaded: $u"
+                    if ($VerboseOutput) { $output += "Uploaded: $u" }
+                }
             } catch {
                 Write-Host "Error: $($_.Exception.Message)"
                 $output += "Error: $($_.Exception.Message)"
@@ -117,8 +122,12 @@ function Invoke-CatboxUpload {
             try {
                 $r = Upload-UrlToCatbox -Url $u
                 $uploadedUrls += $r
-                Write-Host "Uploaded URL: $r"
-                if ($VerboseOutput) { $output += "Uploaded URL: $r" }
+                if ($GuiMode) {
+                    $output += "Uploaded URL: $r"
+                } else {
+                    Write-Host "Uploaded URL: $r"
+                    if ($VerboseOutput) { $output += "Uploaded URL: $r" }
+                }
             } catch {
                 Write-Host "Error: $($_.Exception.Message)"
                 $output += "Error: $($_.Exception.Message)"
@@ -253,7 +262,10 @@ if (-not $Files -and -not $Urls) {
         $uploadButton.Location = New-Object System.Drawing.Point(10,300)
         $uploadButton.Add_Click({
             $urls = if ($urlTextBox.Text) { $urlTextBox.Text -split ',' | ForEach-Object { $_.Trim() } } else { $null }
-            $output = Invoke-CatboxUpload -Files $script:selectedFiles -Urls $urls -Title $titleTextBox.Text -Description $descTextBox.Text
+            $output = Invoke-CatboxUpload -Files $script:selectedFiles -Urls $urls -Title $titleTextBox.Text -Description $descTextBox.Text -GuiMode
+            $totalInputs = $script:selectedFiles.Count + $(if ($urls) { $urls.Count } else { 0 })
+            $successfulUploads = ($output | Where-Object { $_ -match "^Uploaded" }).Count
+            $output += "Successfully uploaded $successfulUploads out of $totalInputs inputs."
             $outputTextBox.Text = $output -join "`r`n"
         })
         $form.Controls.Add($uploadButton)
