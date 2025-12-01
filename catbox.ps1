@@ -215,6 +215,8 @@ if (-not $Files -and -not $Urls) {
         $urlLabel = New-Object System.Windows.Forms.Label
         $urlLabel.Text = "URLs (comma-separated):"
         $urlLabel.Location = New-Object System.Drawing.Point(10,150)
+        $urlLabel.Size = New-Object System.Drawing.Size(360,20)
+        $urlLabel.Font = New-Object System.Drawing.Font("Microsoft Sans Serif", 8.25)
         $form.Controls.Add($urlLabel)
 
         $urlTextBox = New-Object System.Windows.Forms.TextBox
@@ -227,6 +229,8 @@ if (-not $Files -and -not $Urls) {
         $titleLabel = New-Object System.Windows.Forms.Label
         $titleLabel.Text = "Title:"
         $titleLabel.Location = New-Object System.Drawing.Point(10,200)
+        $titleLabel.Size = New-Object System.Drawing.Size(360,20)
+        $titleLabel.Font = New-Object System.Drawing.Font("Microsoft Sans Serif", 8.25)
         $form.Controls.Add($titleLabel)
 
         $titleTextBox = New-Object System.Windows.Forms.TextBox
@@ -240,6 +244,8 @@ if (-not $Files -and -not $Urls) {
         $descLabel = New-Object System.Windows.Forms.Label
         $descLabel.Text = "Description:"
         $descLabel.Location = New-Object System.Drawing.Point(10,250)
+        $descLabel.Size = New-Object System.Drawing.Size(360,20)
+        $descLabel.Font = New-Object System.Drawing.Font("Microsoft Sans Serif", 8.25)
         $form.Controls.Add($descLabel)
 
         $descTextBox = New-Object System.Windows.Forms.TextBox
