@@ -97,54 +97,73 @@ function Create-AnonymousAlbum {
 function Upload-FileToSxcu {
     param(
         [Parameter(Mandatory=$true)] [string]$Path,
-        [Parameter(Mandatory=$false)] [string]$CollectionId = "",
-        [Parameter(Mandatory=$false)] [int]$MaxRetries = 10
+        [Parameter(Mandatory=$false)] [string]$CollectionId = ""
     )
     if (-not (Test-Path -LiteralPath $Path)) {
         throw "File not found: $Path"
     }
     Write-Verbose "Uploading file to sxcu: $Path"
     
-    $attempt = 0
-    while ($attempt -lt $MaxRetries) {
-        try {
-            $args = @("-s", "--fail-with-body", "-H", "User-Agent: sxcuUploader/1.0 (+https://github.com)", "-F", "file=@`"$Path`"")
-            if ($CollectionId) {
-                $args += @("-F", "collection=$CollectionId")
-            }
-            $resp = & curl.exe $args https://sxcu.net/api/files/create
-            if ($LASTEXITCODE -ne 0) {
-                throw "curl failed: $resp"
-            }
-            $json = $resp | ConvertFrom-Json
-            if ($json.error) {
-                if ($json.code -eq 815) {
-                    # Rate limit error - retry with exponential backoff
-                    $attempt++
-                    if ($attempt -lt $MaxRetries) {
-                        $delay = [Math]::Min(600, [Math]::Pow(2, $attempt) * 1)
-                        Write-Host "Rate limited (attempt $attempt/$MaxRetries). Waiting ${delay}s..."
-                        Start-Sleep -Seconds $delay
-                        continue
-                    }
-                }
-                throw "API error: $($json.error) (code: $($json.code))"
-            }
-            return $json
-        } catch {
-            if ($_.Exception.Message -match "code: 815|Rate limit exceeded") {
-                $attempt++
-                if ($attempt -lt $MaxRetries) {
-                    $delay = [Math]::Min(600, [Math]::Pow(2, $attempt) * 1)
-                    Write-Host "Rate limited (attempt $attempt/$MaxRetries). Waiting ${delay}s..."
-                    Start-Sleep -Seconds $delay
-                    continue
-                }
-            }
-            throw "Upload failed for $Path : $_"
+    # Check and wait for rate limit if needed
+    if ($null -eq $script:rateLimits) {
+        $script:rateLimits = @{}
+    }
+    $bucket = "sxcu_files_create"
+    $rateLimit = $script:rateLimits[$bucket]
+    
+    if ($rateLimit) {
+        $remaining = $rateLimit['remaining']
+        $resetTime = $rateLimit['reset']
+        $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+        
+        if ($remaining -le 0 -and $resetTime -gt $now) {
+            $waitSeconds = $resetTime - $now
+            Write-Host "Rate limit quota exhausted. Waiting ${waitSeconds}s until reset..."
+            Start-Sleep -Seconds $waitSeconds
         }
     }
-    throw "Upload failed for $Path : Max retries exceeded"
+    
+    try {
+        $headersFile = [System.IO.Path]::GetTempFileName()
+        $args = @("-s", "--fail-with-body", "-D", $headersFile, "-H", "User-Agent: sxcuUploader/1.0 (+https://github.com)", "-F", "file=@`"$Path`"")
+        if ($CollectionId) {
+            $args += @("-F", "collection=$CollectionId")
+        }
+        $resp = & curl.exe $args https://sxcu.net/api/files/create
+        
+        # Parse response headers
+        $headers = @{}
+        if (Test-Path $headersFile) {
+            Get-Content $headersFile | ForEach-Object {
+                if ($_ -match ':\s*') {
+                    $key, $value = $_ -split ':\s*', 2
+                    $headers[$key.Trim().ToLower()] = $value.Trim()
+                }
+            }
+            Remove-Item $headersFile -ErrorAction SilentlyContinue
+        }
+        
+        if ($LASTEXITCODE -ne 0) {
+            throw "curl failed: $resp"
+        }
+        
+        # Update rate limit info from headers
+        if ($headers['x-ratelimit-limit'] -and $headers['x-ratelimit-reset']) {
+            $script:rateLimits[$bucket] = @{
+                'limit' = [int]$headers['x-ratelimit-limit']
+                'remaining' = [int]$headers['x-ratelimit-remaining']
+                'reset' = [int]$headers['x-ratelimit-reset']
+            }
+        }
+        
+        $json = $resp | ConvertFrom-Json
+        if ($json.error) {
+            throw "API error: $($json.error) (code: $($json.code))"
+        }
+        return $json
+    } catch {
+        throw "Upload failed for $Path : $_"
+    }
 }
 
 function Create-SxcuCollection {
@@ -181,6 +200,9 @@ function Invoke-CatboxUpload {
     $output = @()
     $uploadedUrls = @()
     $collectionId = ""
+    
+    # Rate limit tracking per bucket
+    $script:rateLimits = @{}
 
     if ($Provider -eq 'sxcu') {
         if ($Urls) {
@@ -201,7 +223,6 @@ function Invoke-CatboxUpload {
     }
 
     if ($Files) {
-        $fileIndex = 0
         foreach ($f in $Files) {
             try {
                 if ($Provider -eq 'sxcu') {
@@ -225,11 +246,6 @@ function Invoke-CatboxUpload {
             } catch {
                 Write-Host "Error: $($_.Exception.Message)"
                 $output += "Error: $($_.Exception.Message)"
-            }
-            # Add delay between uploads to respect rate limits (except after last file)
-            $fileIndex++
-            if ($fileIndex -lt $Files.Count -and $Provider -eq 'sxcu') {
-                Start-Sleep -Seconds 2
             }
         }
     }
