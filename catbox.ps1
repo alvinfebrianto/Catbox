@@ -228,15 +228,8 @@ function Invoke-CatboxUpload {
                 if ($Provider -eq 'sxcu') {
                     $resp = Upload-FileToSxcu -Path $f -CollectionId $collectionId
                     $u = $resp.url
-                    if ($resp.del_url) {
-                        $output += "Uploaded: $u"
-                        $output += "Delete URL: $($resp.del_url)"
-                        Write-Host "Uploaded: $u"
-                        Write-Host "Delete URL: $($resp.del_url)"
-                    } else {
-                        $output += "Uploaded: $u"
-                        Write-Host "Uploaded: $u"
-                    }
+                    $output += "Uploaded: $u"
+                    Write-Host "Uploaded: $u"
                 } else {
                     $u = Upload-FileToCatbox -Path $f
                     $uploadedUrls += $u
