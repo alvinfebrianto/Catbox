@@ -103,26 +103,6 @@ function Upload-FileToSxcu {
         throw "File not found: $Path"
     }
     Write-Verbose "Uploading file to sxcu: $Path"
-    
-    # Check and wait for rate limit if needed
-    if ($null -eq $script:rateLimits) {
-        $script:rateLimits = @{}
-    }
-    $bucket = "sxcu_files_create"
-    $rateLimit = $script:rateLimits[$bucket]
-    
-    if ($rateLimit) {
-        $remaining = $rateLimit['remaining']
-        $resetTime = $rateLimit['reset']
-        $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-        
-        if ($remaining -le 0 -and $resetTime -gt $now) {
-            $waitSeconds = $resetTime - $now
-            Write-Host "Rate limit quota exhausted. Waiting ${waitSeconds}s until reset..."
-            Start-Sleep -Seconds $waitSeconds
-        }
-    }
-    
     try {
         $headersFile = [System.IO.Path]::GetTempFileName()
         $args = @("-s", "--fail-with-body", "-D", $headersFile, "-H", "User-Agent: sxcuUploader/1.0 (+https://github.com)", "-F", "file=@`"$Path`"")
@@ -147,19 +127,20 @@ function Upload-FileToSxcu {
             throw "curl failed: $resp"
         }
         
-        # Update rate limit info from headers
-        if ($headers['x-ratelimit-limit'] -and $headers['x-ratelimit-reset']) {
-            $script:rateLimits[$bucket] = @{
-                'limit' = [int]$headers['x-ratelimit-limit']
-                'remaining' = [int]$headers['x-ratelimit-remaining']
-                'reset' = [int]$headers['x-ratelimit-reset']
-            }
-        }
-        
         $json = $resp | ConvertFrom-Json
         if ($json.error) {
             throw "API error: $($json.error) (code: $($json.code))"
         }
+        
+        # Track rate limit info globally for next upload
+        if ($headers['x-ratelimit-remaining'] -ne $null -and $headers['x-ratelimit-reset'] -ne $null) {
+            $script:sxcuRateLimit = @{
+                'remaining' = [int]$headers['x-ratelimit-remaining']
+                'reset' = [int]$headers['x-ratelimit-reset']
+                'checked' = $true
+            }
+        }
+        
         return $json
     } catch {
         throw "Upload failed for $Path : $_"
@@ -201,8 +182,12 @@ function Invoke-CatboxUpload {
     $uploadedUrls = @()
     $collectionId = ""
     
-    # Rate limit tracking per bucket
-    $script:rateLimits = @{}
+    # Initialize rate limit tracker
+    $script:sxcuRateLimit = @{
+        'remaining' = $null
+        'reset' = $null
+        'checked' = $false
+    }
 
     if ($Provider -eq 'sxcu') {
         if ($Urls) {
@@ -226,6 +211,21 @@ function Invoke-CatboxUpload {
         foreach ($f in $Files) {
             try {
                 if ($Provider -eq 'sxcu') {
+                    # Check rate limit before upload
+                    if ($null -ne $script:sxcuRateLimit -and $script:sxcuRateLimit['checked']) {
+                        $remaining = $script:sxcuRateLimit['remaining']
+                        $resetTime = $script:sxcuRateLimit['reset']
+                        
+                        if ($remaining -le 0) {
+                            $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+                            if ($resetTime -gt $now) {
+                                $waitSeconds = $resetTime - $now
+                                Write-Host "Rate limit exhausted. Waiting ${waitSeconds}s until reset..."
+                                Start-Sleep -Seconds $waitSeconds
+                            }
+                        }
+                    }
+                    
                     $resp = Upload-FileToSxcu -Path $f -CollectionId $collectionId
                     $u = $resp.url
                     $output += "Uploaded: $u"
