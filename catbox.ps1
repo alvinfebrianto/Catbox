@@ -65,8 +65,8 @@ function Upload-UrlToCatbox {
         if ($LASTEXITCODE -ne 0) {
             throw "curl failed: $resp"
         }
-        $res = $resp.Trim()
-        return $res
+        $url = $resp.Trim()
+        return $url
     } catch {
         throw "URL upload failed for $Url : $_"
     }
@@ -84,7 +84,7 @@ function Create-AnonymousAlbum {
     $filesArg = ($FileNames -join ' ')
     Write-Verbose "Creating album with files: $filesArg"
     try {
-        $resp = & curl.exe -s --fail-with-body -F reqtype=createalbum -F title="$Title" -F desc="$Description" -F files="$filesArg" https://catbox.moe/user/api.php
+        $resp = & curl.exe -s --fail-with-body -F reqtype=createalbum -F title="$Title" -F desc="$Desc" -F files="$filesArg" https://catbox.moe/user/api.php
         if ($LASTEXITCODE -ne 0) {
             throw "curl failed: $resp"
         }
@@ -110,7 +110,7 @@ function Upload-FileToSxcu {
             $args += @("-F", "collection=$CollectionId")
         }
         $resp = & curl.exe $args https://sxcu.net/api/files/create
-        
+
         # Parse response headers
         $headers = @{}
         if (Test-Path $headersFile) {
@@ -122,16 +122,16 @@ function Upload-FileToSxcu {
             }
             Remove-Item $headersFile -ErrorAction SilentlyContinue
         }
-        
+
         if ($LASTEXITCODE -ne 0) {
             throw "curl failed: $resp"
         }
-        
+
         $json = $resp | ConvertFrom-Json
         if ($json.error) {
             throw "API error: $($json.error) (code: $($json.code))"
         }
-        
+
         # Track rate limit info globally for next upload
         if ($headers['x-ratelimit-remaining'] -ne $null -and $headers['x-ratelimit-reset'] -ne $null) {
             $script:sxcuRateLimit = @{
@@ -140,7 +140,7 @@ function Upload-FileToSxcu {
                 'checked' = $true
             }
         }
-        
+
         return $json
     } catch {
         throw "Upload failed for $Path : $_"
@@ -181,7 +181,7 @@ function Invoke-CatboxUpload {
     $output = @()
     $uploadedUrls = @()
     $collectionId = ""
-    
+
     # Initialize rate limit tracker
     $script:sxcuRateLimit = @{
         'remaining' = $null
@@ -208,14 +208,14 @@ function Invoke-CatboxUpload {
     }
 
     if ($Files) {
-        foreach ($f in $Files) {
+        foreach ($filePath in $Files) {
             try {
                 if ($Provider -eq 'sxcu') {
                     # Check rate limit before upload
                     if ($null -ne $script:sxcuRateLimit -and $script:sxcuRateLimit['checked']) {
                         $remaining = $script:sxcuRateLimit['remaining']
                         $resetTime = $script:sxcuRateLimit['reset']
-                        
+
                         if ($remaining -le 0) {
                             $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
                             if ($resetTime -gt $now) {
@@ -225,16 +225,16 @@ function Invoke-CatboxUpload {
                             }
                         }
                     }
-                    
-                    $resp = Upload-FileToSxcu -Path $f -CollectionId $collectionId
-                    $u = $resp.url
-                    $output += "Uploaded: $u"
-                    Write-Host "Uploaded: $u"
+
+                    $resp = Upload-FileToSxcu -Path $filePath -CollectionId $collectionId
+                    $fileUrl = $resp.url
+                    $output += "Uploaded: $fileUrl"
+                    Write-Host "Uploaded: $fileUrl"
                 } else {
-                    $u = Upload-FileToCatbox -Path $f
-                    $uploadedUrls += $u
-                    $output += "Uploaded: $u"
-                    Write-Host "Uploaded: $u"
+                    $fileUrl = Upload-FileToCatbox -Path $filePath
+                    $uploadedUrls += $fileUrl
+                    $output += "Uploaded: $fileUrl"
+                    Write-Host "Uploaded: $fileUrl"
                 }
             } catch {
                 Write-Host "Error: $($_.Exception.Message)"
@@ -245,12 +245,12 @@ function Invoke-CatboxUpload {
 
     if ($Provider -eq 'catbox') {
         if ($Urls) {
-            foreach ($u in $Urls) {
+            foreach ($inputUrl in $Urls) {
                 try {
-                    $r = Upload-UrlToCatbox -Url $u
-                    $uploadedUrls += $r
-                    $output += "Uploaded URL: $r"
-                    Write-Host "Uploaded URL: $r"
+                    $uploadUrl = Upload-UrlToCatbox -Url $inputUrl
+                    $uploadedUrls += $uploadUrl
+                    $output += "Uploaded URL: $uploadUrl"
+                    Write-Host "Uploaded URL: $uploadUrl"
                 } catch {
                     Write-Host "Error: $($_.Exception.Message)"
                     $output += "Error: $($_.Exception.Message)"
@@ -265,14 +265,14 @@ function Invoke-CatboxUpload {
         }
 
         $fileNames = @()
-        foreach ($u in $uploadedUrls) {
+        foreach ($uploadUrl in $uploadedUrls) {
             try {
-                $uri = [System.Uri]$u
+                $uri = [System.Uri]$uploadUrl
                 $basename = [System.IO.Path]::GetFileName($uri.LocalPath)
                 if ($basename -and -not ($fileNames -contains $basename)) { $fileNames += $basename }
             } catch {
-                Write-Host "Warning: Could not parse returned URL: $u"
-                $output += "Warning: Could not parse returned URL: $u"
+                Write-Host "Warning: Could not parse returned URL: $uploadUrl"
+                $output += "Warning: Could not parse returned URL: $uploadUrl"
             }
         }
 
@@ -318,7 +318,7 @@ if (-not $Files -and -not $Urls) {
 
         $providerComboBox = New-Object System.Windows.Forms.ComboBox
         $providerComboBox.Items.AddRange(@("catbox", "sxcu"))
-        $providerComboBox.SelectedIndex = 0
+        $providerComboBox.SelectedIndex = 1
         $providerComboBox.Location = New-Object System.Drawing.Point(95,8)
         $providerComboBox.Size = New-Object System.Drawing.Size(275,20)
         $providerComboBox.Add_SelectedIndexChanged({
