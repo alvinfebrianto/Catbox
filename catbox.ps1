@@ -78,6 +78,40 @@ function Create-AnonymousAlbum {
     }
 }
 
+function Get-SxcuRateLimitFromFile {
+    param()
+    $rateLimitFile = Join-Path $env:TEMP "catbox_sxcu_rate_limit.json"
+    if (Test-Path $rateLimitFile) {
+        try {
+            $content = Get-Content $rateLimitFile -Raw
+            $data = $content | ConvertFrom-Json
+            return $data
+        } catch {
+            Write-Verbose "Failed to read rate limit file: $_"
+            return $null
+        }
+    }
+    return $null
+}
+
+function Set-SxcuRateLimitToFile {
+    param(
+        [int]$Remaining,
+        [int]$Reset
+    )
+    $rateLimitFile = Join-Path $env:TEMP "catbox_sxcu_rate_limit.json"
+    try {
+        $data = @{
+            'remaining' = $Remaining
+            'reset' = $Reset
+            'updated' = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+        } | ConvertTo-Json
+        Set-Content -Path $rateLimitFile -Value $data -Force
+    } catch {
+        Write-Verbose "Failed to write rate limit file: $_"
+    }
+}
+
 function Upload-FileToSxcu {
     param(
         [Parameter(Mandatory=$true)] [string]$Path,
@@ -116,13 +150,15 @@ function Upload-FileToSxcu {
             throw "API error: $($json.error) (code: $($json.code))"
         }
 
-        # Track rate limit info globally for next upload
+        # Track rate limit info globally and persist to file
         if ($headers['x-ratelimit-remaining'] -ne $null -and $headers['x-ratelimit-reset'] -ne $null) {
             $script:sxcuRateLimit = @{
                 'remaining' = [int]$headers['x-ratelimit-remaining']
                 'reset' = [int]$headers['x-ratelimit-reset']
                 'checked' = $true
             }
+            # Persist to shared file for other instances
+            Set-SxcuRateLimitToFile -Remaining ([int]$headers['x-ratelimit-remaining']) -Reset ([int]$headers['x-ratelimit-reset'])
         }
 
         return $json
@@ -149,6 +185,17 @@ function Create-SxcuCollection {
         return $json
     } catch {
         throw "Create collection failed: $_"
+    }
+}
+
+function Clear-SxcuRateLimitFile {
+    $rateLimitFile = Join-Path $env:TEMP "catbox_sxcu_rate_limit.json"
+    if (Test-Path $rateLimitFile) {
+        try {
+            Remove-Item $rateLimitFile -Force
+        } catch {
+            Write-Verbose "Failed to remove rate limit file: $_"
+        }
     }
 }
 
@@ -206,6 +253,8 @@ function Invoke-CatboxUpload {
             Write-Host "Error: $($_.Exception.Message)"
             $output += "Error: $($_.Exception.Message)"
             if ($mutex) { $mutex.ReleaseMutex(); $mutex.Close(); $mutex = $null }
+            # Clean up rate limit file on error
+            Clear-SxcuRateLimitFile
             return $output
         }
     }
@@ -215,8 +264,22 @@ function Invoke-CatboxUpload {
             foreach ($filePath in $Files) {
                 try {
                     if ($Provider -eq 'sxcu') {
-                        # Check rate limit before upload
-                        if ($null -ne $script:sxcuRateLimit -and $script:sxcuRateLimit['checked']) {
+                        # Check rate limit before upload - read from shared file
+                        $sharedRateLimit = Get-SxcuRateLimitFromFile
+                        if ($sharedRateLimit -ne $null) {
+                            $remaining = $sharedRateLimit.remaining
+                            $resetTime = $sharedRateLimit.reset
+
+                            if ($remaining -le 0) {
+                                $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+                                if ($resetTime -gt $now) {
+                                    $waitSeconds = $resetTime - $now
+                                    Write-Host "Rate limit exhausted. Waiting ${waitSeconds}s until reset..."
+                                    Start-Sleep -Seconds $waitSeconds
+                                }
+                            }
+                        } elseif ($null -ne $script:sxcuRateLimit -and $script:sxcuRateLimit['checked']) {
+                            # Fallback to in-memory rate limit if shared file not available
                             $remaining = $script:sxcuRateLimit['remaining']
                             $resetTime = $script:sxcuRateLimit['reset']
 
@@ -302,6 +365,11 @@ function Invoke-CatboxUpload {
             $mutex.ReleaseMutex()
             $mutex.Close()
             $mutex = $null
+        }
+        
+        # Clear shared rate limit file when done with sxcu uploads
+        if ($Provider -eq 'sxcu') {
+            Clear-SxcuRateLimitFile
         }
     }
 
