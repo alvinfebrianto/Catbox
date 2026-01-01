@@ -1,19 +1,3 @@
-<#
-Usage examples:
-   .\catbox.ps1 -Files 'C:\path\a.png','C:\path\b.jpg' -Title 'My Album'
-   .\catbox.ps1 -Files 'C:\a.png' -Provider sxcu -Title 'Upload to sxcu'
-   .\catbox.ps1 -Urls 'https://example.com/img.png' -Title 'From URLs'
-   .\catbox.ps1 -Files 'C:\a.png' -Urls 'https://example.com/img.png' -Title 'Mixed'
-   .\catbox.ps1  # Launches GUI
-
-Notes:
-- Provider options: catbox (default), sxcu
-- Anonymous: do NOT provide a userhash. Albums/collections created anonymously cannot be edited or deleted.
-- sxcu does not support URL uploads.
-- Script outputs uploaded file URLs and the album/collection URL.
-- GUI mode uses Windows Forms for file selection.
-#>
-
 param(
     [Parameter(Mandatory=$false)]
     [string[]]$Files,
@@ -228,13 +212,13 @@ function Invoke-CatboxUpload {
 
                     $resp = Upload-FileToSxcu -Path $filePath -CollectionId $collectionId
                     $fileUrl = $resp.url
-                    $output += "Uploaded: $fileUrl"
-                    Write-Host "Uploaded: $fileUrl"
+                    $output += "$fileUrl"
+                    Write-Host "$fileUrl"
                 } else {
                     $fileUrl = Upload-FileToCatbox -Path $filePath
                     $uploadedUrls += $fileUrl
-                    $output += "Uploaded: $fileUrl"
-                    Write-Host "Uploaded: $fileUrl"
+                    $output += "$fileUrl"
+                    Write-Host "$fileUrl"
                 }
             } catch {
                 Write-Host "Error: $($_.Exception.Message)"
@@ -249,8 +233,8 @@ function Invoke-CatboxUpload {
                 try {
                     $uploadUrl = Upload-UrlToCatbox -Url $inputUrl
                     $uploadedUrls += $uploadUrl
-                    $output += "Uploaded URL: $uploadUrl"
-                    Write-Host "Uploaded URL: $uploadUrl"
+                    $output += "$uploadUrl"
+                    Write-Host "$uploadUrl"
                 } catch {
                     Write-Host "Error: $($_.Exception.Message)"
                     $output += "Error: $($_.Exception.Message)"
@@ -413,7 +397,7 @@ if (-not $Files -and -not $Urls) {
             $urls = if ($urlTextBox.Text) { $urlTextBox.Text -split ',' | ForEach-Object { $_.Trim() } } else { $null }
             $output = Invoke-CatboxUpload -Files $script:selectedFiles -Urls $urls -Title $titleTextBox.Text -Description $descTextBox.Text -Provider $providerComboBox.SelectedItem -GuiMode
             $totalInputs = $script:selectedFiles.Count + $(if ($urls) { $urls.Count } else { 0 })
-            $successfulUploads = ($output | Where-Object { $_ -match "^Uploaded" }).Count
+            $successfulUploads = ($output | Where-Object { $_ -match "^https?://" }).Count
             $output = @("Successfully uploaded $successfulUploads out of $totalInputs inputs.") + $output
             $outputTextBox.Text = $output -join "`r`n"
         })
