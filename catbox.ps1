@@ -305,15 +305,20 @@ if (-not $Files -and -not $Urls) {
         $providerComboBox.SelectedIndex = 1
         $providerComboBox.Location = New-Object System.Drawing.Point(95,8)
         $providerComboBox.Size = New-Object System.Drawing.Size(275,20)
-        $providerComboBox.Add_SelectedIndexChanged({
+        
+        # Helper to toggle URL fields based on provider
+        $toggleUrlFields = {
             if ($providerComboBox.SelectedItem -eq "sxcu") {
                 $urlLabel.Enabled = $false
                 $urlTextBox.Enabled = $false
+                $urlTextBox.Text = ""
             } else {
                 $urlLabel.Enabled = $true
                 $urlTextBox.Enabled = $true
             }
-        })
+        }
+
+        $providerComboBox.Add_SelectedIndexChanged($toggleUrlFields)
         $form.Controls.Add($providerComboBox)
 
         # File button
@@ -411,6 +416,11 @@ if (-not $Files -and -not $Urls) {
         $outputTextBox.Size = New-Object System.Drawing.Size(360,100)
         $outputTextBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
         $form.Controls.Add($outputTextBox)
+
+        # Initial toggle
+        $form.Add_Load({
+            & $toggleUrlFields
+        })
 
         $form.ShowDialog()
     } catch {
