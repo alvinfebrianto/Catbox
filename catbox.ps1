@@ -165,6 +165,7 @@ function Invoke-CatboxUpload {
     $output = @()
     $uploadedUrls = @()
     $collectionId = ""
+    $mutex = $null
 
     # Initialize rate limit tracker
     $script:sxcuRateLimit = @{
@@ -179,6 +180,23 @@ function Invoke-CatboxUpload {
             $output += "Error: sxcu provider does not support URL uploads."
             return $output
         }
+
+        # Acquire cross-process mutex for sxcu
+        try {
+            Write-Host "Waiting for sxcu upload slot..."
+            $mutex = New-Object System.Threading.Mutex($false, "Global\CatboxSxcuUploadMutex")
+            $hasHandle = $mutex.WaitOne()
+            if (-not $hasHandle) {
+                throw "Could not acquire sxcu upload lock."
+            }
+            Write-Host "Acquired sxcu upload slot."
+        } catch {
+            Write-Host "Error: $($_.Exception.Message)"
+            $output += "Error: $($_.Exception.Message)"
+            if ($mutex) { $mutex.Close(); $mutex = $null }
+            return $output
+        }
+
         try {
             $coll = Create-SxcuCollection -Title $Title -Desc $Description
             $collectionId = $coll.collection_id
@@ -187,54 +205,41 @@ function Invoke-CatboxUpload {
         } catch {
             Write-Host "Error: $($_.Exception.Message)"
             $output += "Error: $($_.Exception.Message)"
+            if ($mutex) { $mutex.ReleaseMutex(); $mutex.Close(); $mutex = $null }
             return $output
         }
     }
 
-    if ($Files) {
-        foreach ($filePath in $Files) {
-            try {
-                if ($Provider -eq 'sxcu') {
-                    # Check rate limit before upload
-                    if ($null -ne $script:sxcuRateLimit -and $script:sxcuRateLimit['checked']) {
-                        $remaining = $script:sxcuRateLimit['remaining']
-                        $resetTime = $script:sxcuRateLimit['reset']
+    try {
+        if ($Files) {
+            foreach ($filePath in $Files) {
+                try {
+                    if ($Provider -eq 'sxcu') {
+                        # Check rate limit before upload
+                        if ($null -ne $script:sxcuRateLimit -and $script:sxcuRateLimit['checked']) {
+                            $remaining = $script:sxcuRateLimit['remaining']
+                            $resetTime = $script:sxcuRateLimit['reset']
 
-                        if ($remaining -le 0) {
-                            $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-                            if ($resetTime -gt $now) {
-                                $waitSeconds = $resetTime - $now
-                                Write-Host "Rate limit exhausted. Waiting ${waitSeconds}s until reset..."
-                                Start-Sleep -Seconds $waitSeconds
+                            if ($remaining -le 0) {
+                                $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+                                if ($resetTime -gt $now) {
+                                    $waitSeconds = $resetTime - $now
+                                    Write-Host "Rate limit exhausted. Waiting ${waitSeconds}s until reset..."
+                                    Start-Sleep -Seconds $waitSeconds
+                                }
                             }
                         }
+
+                        $resp = Upload-FileToSxcu -Path $filePath -CollectionId $collectionId
+                        $fileUrl = $resp.url
+                        $output += "$fileUrl"
+                        Write-Host "$fileUrl"
+                    } else {
+                        $fileUrl = Upload-FileToCatbox -Path $filePath
+                        $uploadedUrls += $fileUrl
+                        $output += "$fileUrl"
+                        Write-Host "$fileUrl"
                     }
-
-                    $resp = Upload-FileToSxcu -Path $filePath -CollectionId $collectionId
-                    $fileUrl = $resp.url
-                    $output += "$fileUrl"
-                    Write-Host "$fileUrl"
-                } else {
-                    $fileUrl = Upload-FileToCatbox -Path $filePath
-                    $uploadedUrls += $fileUrl
-                    $output += "$fileUrl"
-                    Write-Host "$fileUrl"
-                }
-            } catch {
-                Write-Host "Error: $($_.Exception.Message)"
-                $output += "Error: $($_.Exception.Message)"
-            }
-        }
-    }
-
-    if ($Provider -eq 'catbox') {
-        if ($Urls) {
-            foreach ($inputUrl in $Urls) {
-                try {
-                    $uploadUrl = Upload-UrlToCatbox -Url $inputUrl
-                    $uploadedUrls += $uploadUrl
-                    $output += "$uploadUrl"
-                    Write-Host "$uploadUrl"
                 } catch {
                     Write-Host "Error: $($_.Exception.Message)"
                     $output += "Error: $($_.Exception.Message)"
@@ -242,38 +247,61 @@ function Invoke-CatboxUpload {
             }
         }
 
-        if ($uploadedUrls.Count -eq 0) {
-            Write-Host "No uploads completed. Exiting."
-            $output += "No uploads completed. Exiting."
-            return $output
-        }
+        if ($Provider -eq 'catbox') {
+            if ($Urls) {
+                foreach ($inputUrl in $Urls) {
+                    try {
+                        $uploadUrl = Upload-UrlToCatbox -Url $inputUrl
+                        $uploadedUrls += $uploadUrl
+                        $output += "$uploadUrl"
+                        Write-Host "$uploadUrl"
+                    } catch {
+                        Write-Host "Error: $($_.Exception.Message)"
+                        $output += "Error: $($_.Exception.Message)"
+                    }
+                }
+            }
 
-        $fileNames = @()
-        foreach ($uploadUrl in $uploadedUrls) {
+            if ($uploadedUrls.Count -eq 0) {
+                Write-Host "No uploads completed. Exiting."
+                $output += "No uploads completed. Exiting."
+                return $output
+            }
+
+            $fileNames = @()
+            foreach ($uploadUrl in $uploadedUrls) {
+                try {
+                    $uri = [System.Uri]$uploadUrl
+                    $basename = [System.IO.Path]::GetFileName($uri.LocalPath)
+                    if ($basename -and -not ($fileNames -contains $basename)) { $fileNames += $basename }
+                } catch {
+                    Write-Host "Warning: Could not parse returned URL: $uploadUrl"
+                    $output += "Warning: Could not parse returned URL: $uploadUrl"
+                }
+            }
+
             try {
-                $uri = [System.Uri]$uploadUrl
-                $basename = [System.IO.Path]::GetFileName($uri.LocalPath)
-                if ($basename -and -not ($fileNames -contains $basename)) { $fileNames += $basename }
+                $albumResp = Create-AnonymousAlbum -FileNames $fileNames -Title $Title -Desc $Description
+                if ($albumResp -match '^https?://') {
+                    Write-Host "Album URL: $albumResp"
+                    $output += "Album URL: $albumResp"
+                } else {
+                    Write-Host "Album short code: $albumResp"
+                    Write-Host "Album URL: https://catbox.moe/album/$albumResp"
+                    $output += "Album short code: $albumResp"
+                    $output += "Album URL: https://catbox.moe/album/$albumResp"
+                }
             } catch {
-                Write-Host "Warning: Could not parse returned URL: $uploadUrl"
-                $output += "Warning: Could not parse returned URL: $uploadUrl"
+                Write-Host "Error: $($_.Exception.Message)"
+                $output += "Error: $($_.Exception.Message)"
             }
         }
-
-        try {
-            $albumResp = Create-AnonymousAlbum -FileNames $fileNames -Title $Title -Desc $Description
-            if ($albumResp -match '^https?://') {
-                Write-Host "Album URL: $albumResp"
-                $output += "Album URL: $albumResp"
-            } else {
-                Write-Host "Album short code: $albumResp"
-                Write-Host "Album URL: https://catbox.moe/album/$albumResp"
-                $output += "Album short code: $albumResp"
-                $output += "Album URL: https://catbox.moe/album/$albumResp"
-            }
-        } catch {
-            Write-Host "Error: $($_.Exception.Message)"
-            $output += "Error: $($_.Exception.Message)"
+    } finally {
+        if ($mutex) {
+            Write-Host "Releasing sxcu upload slot."
+            $mutex.ReleaseMutex()
+            $mutex.Close()
+            $mutex = $null
         }
     }
 
