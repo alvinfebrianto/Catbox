@@ -548,6 +548,7 @@ if (-not $Files -and -not $Urls) {
             if ($script:uploadCompleted) {
                 $script:selectedFiles = @()
                 $fileListBox.Items.Clear()
+                $titleTextBox.Text = ""
                 $script:uploadCompleted = $false
             }
             
@@ -559,7 +560,7 @@ if (-not $Files -and -not $Urls) {
                     $script:selectedFiles += $_
                     $fileListBox.Items.Add($_)
                 }
-                if ($titleTextBox.Text -eq "" -and $script:selectedFiles.Count -gt 0) {
+                if ($titleTextBox.Text -eq "") {
                     $folderPath = [System.IO.Path]::GetDirectoryName($script:selectedFiles[0])
                     $titleTextBox.Text = [System.IO.Path]::GetFileName($folderPath)
                 }
