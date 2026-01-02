@@ -343,9 +343,6 @@ function Invoke-CatboxUpload {
             return $output
         }
 
-        # Clear any stale rate limit file when acquiring mutex
-        Clear-SxcuRateLimitFile
-
         try {
             $coll = Create-SxcuCollection -Title $Title -Desc $Description
             $collectionId = $coll.collection_id
@@ -376,19 +373,18 @@ function Invoke-CatboxUpload {
                                 $remaining = $sharedRateLimit.remaining
                                 $resetTime = $sharedRateLimit.reset
                                 $lastUpdated = $sharedRateLimit.updated
-
-                                if ($remaining -le 0) {
-                                    $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-                                    if ($resetTime -gt $now) {
-                                        $waitSeconds = $resetTime - $now + 1  # Add 1 second buffer
-                                        Write-Host "Rate limit exhausted. Waiting ${waitSeconds}s until reset..."
-                                        Start-Sleep -Seconds $waitSeconds
-                                        $checkCount++
-                                        continue  # Re-check rate limit after waiting
-                                    } else {
-                                        # Rate limit should have reset, continue with upload
-                                        $rateLimitChecked = $true
-                                    }
+                                $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+                                
+                                if ($resetTime -le $now) {
+                                    # Rate limit has expired, clear the file and start fresh
+                                    Clear-SxcuRateLimitFile
+                                    $rateLimitChecked = $true
+                                } elseif ($remaining -le 0) {
+                                    $waitSeconds = $resetTime - $now + 1  # Add 1 second buffer
+                                    Write-Host "Rate limit exhausted. Waiting ${waitSeconds}s until reset..."
+                                    Start-Sleep -Seconds $waitSeconds
+                                    $checkCount++
+                                    continue  # Re-check rate limit after waiting
                                 } else {
                                     # We have remaining quota, proceed with upload
                                     $rateLimitChecked = $true
@@ -397,19 +393,17 @@ function Invoke-CatboxUpload {
                                 # Fallback to in-memory rate limit if shared file not available
                                 $remaining = $script:sxcuRateLimit['remaining']
                                 $resetTime = $script:sxcuRateLimit['reset']
+                                $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
-                                if ($remaining -le 0) {
-                                    $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-                                    if ($resetTime -gt $now) {
-                                        $waitSeconds = $resetTime - $now + 1  # Add 1 second buffer
-                                        Write-Host "Rate limit exhausted (memory). Waiting ${waitSeconds}s until reset..."
-                                        Start-Sleep -Seconds $waitSeconds
-                                        $checkCount++
-                                        continue  # Re-check rate limit after waiting
-                                    } else {
-                                        # Rate limit should have reset, proceed with upload
-                                        $rateLimitChecked = $true
-                                    }
+                                if ($resetTime -le $now) {
+                                    # Rate limit has expired, start fresh
+                                    $rateLimitChecked = $true
+                                } elseif ($remaining -le 0) {
+                                    $waitSeconds = $resetTime - $now + 1  # Add 1 second buffer
+                                    Write-Host "Rate limit exhausted (memory). Waiting ${waitSeconds}s until reset..."
+                                    Start-Sleep -Seconds $waitSeconds
+                                    $checkCount++
+                                    continue  # Re-check rate limit after waiting
                                 } else {
                                     # We have remaining quota, proceed with upload
                                     $rateLimitChecked = $true
@@ -498,12 +492,6 @@ function Invoke-CatboxUpload {
             $mutex.ReleaseMutex()
             $mutex.Close()
             $mutex = $null
-        }
-        
-        # Clear shared rate limit file only after ALL instances are done (with delay)
-        if ($Provider -eq 'sxcu') {
-            Start-Sleep -Seconds 2  # Give other instances time to read the final state
-            Clear-SxcuRateLimitFile
         }
     }
 
