@@ -504,6 +504,7 @@ if (-not $Files -and -not $Urls) {
     try {
         Add-Type -AssemblyName System.Windows.Forms
         $selectedFiles = @()
+        $script:uploadCompleted = $false
         $form = New-Object System.Windows.Forms.Form
         $form.Text = "File Uploader"
         $form.Size = New-Object System.Drawing.Size(400,540)
@@ -544,15 +545,19 @@ if (-not $Files -and -not $Urls) {
         $fileButton.Text = "Select Files"
         $fileButton.Location = New-Object System.Drawing.Point(10,35)
         $fileButton.Add_Click({
+            if ($script:uploadCompleted) {
+                $script:selectedFiles = @()
+                $fileListBox.Items.Clear()
+                $script:uploadCompleted = $false
+            }
+            
             $openFileDialog = New-Object System.Windows.Forms.OpenFileDialog
             $openFileDialog.Multiselect = $true
             $openFileDialog.Filter = "Image files (*.jpg;*.jpeg;*.png;*.gif;*.bmp)|*.jpg;*.jpeg;*.png;*.gif;*.bmp|All files (*.*)|*.*"
             if ($openFileDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
                 $openFileDialog.FileNames | ForEach-Object {
-                    if ($_ -notin $script:selectedFiles) {
-                        $script:selectedFiles += $_
-                        $fileListBox.Items.Add($_)
-                    }
+                    $script:selectedFiles += $_
+                    $fileListBox.Items.Add($_)
                 }
                 if ($titleTextBox.Text -eq "" -and $script:selectedFiles.Count -gt 0) {
                     $folderPath = [System.IO.Path]::GetDirectoryName($script:selectedFiles[0])
@@ -642,6 +647,10 @@ if (-not $Files -and -not $Urls) {
                 
                 $output = @($summary) + $output
                 $outputTextBox.Text = $output -join "`r`n"
+                
+                if ($successfulUploads -gt 0) {
+                    $script:uploadCompleted = $true
+                }
             } catch {
                 $outputTextBox.Text = "Upload error: $_"
             } finally {
