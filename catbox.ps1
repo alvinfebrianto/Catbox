@@ -487,6 +487,55 @@ function Clear-ImgchestRateLimitFile {
     }
 }
 
+function Wait-ImgchestRateLimit {
+    param(
+        [int]$Cost = 1
+    )
+
+    $rateLimitFile = Join-Path $env:TEMP "catbox_imgchest_rate_limit.json"
+    $lockFile = $rateLimitFile + ".lock"
+    $lockAcquired = $false
+
+    try {
+        while ($lockAcquired -eq $false) {
+            if (-not (Test-Path $lockFile)) {
+                New-Item -ItemType File -Path $lockFile -Force | Out-Null
+                $lockAcquired = $true
+            } else {
+                Start-Sleep -Milliseconds 50
+            }
+        }
+
+        if (Test-Path $rateLimitFile) {
+            try {
+                $content = Get-Content $rateLimitFile -Raw
+                $data = $content | ConvertFrom-Json
+
+                $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+                $windowStart = $data.windowStart
+                $elapsed = $now - $windowStart
+                $remaining = $data.remaining
+                $limit = $data.limit
+
+                if ($elapsed -lt 60 -and ($remaining - $Cost) -lt 3) {
+                    $waitSeconds = 60 - $elapsed + 1
+                    Write-Host "Approaching rate limit ($remaining/$limit remaining). Waiting ${waitSeconds}s for new window..."
+                    Start-Sleep -Seconds $waitSeconds
+                    Clear-ImgchestRateLimitFile
+                }
+            } catch {
+                Write-Verbose "Failed to parse rate limit file: $_"
+            }
+        }
+    } finally {
+        if (Test-Path $lockFile) {
+            Remove-Item $lockFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    Start-Sleep -Milliseconds 500
+}
+
 function Create-ImgchestPost {
     param(
         [Parameter(Mandatory=$true)] [string[]]$FilePaths,
@@ -496,6 +545,8 @@ function Create-ImgchestPost {
         [Parameter(Mandatory=$false)] [bool]$Nsfw = $true,
         [int]$MaxRetries = 3
     )
+
+    Wait-ImgchestRateLimit -Cost 1
 
     if ($FilePaths.Count -eq 0) {
         throw "No files provided to create post."
@@ -602,6 +653,8 @@ function Add-ImagesToImgchestPost {
         [Parameter(Mandatory=$true)] [string[]]$FilePaths,
         [int]$MaxRetries = 3
     )
+
+    Wait-ImgchestRateLimit -Cost 1
 
     if ($FilePaths.Count -eq 0) {
         throw "No files provided to add to post."
