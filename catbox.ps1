@@ -857,6 +857,7 @@ function Invoke-CatboxUpload {
 
             $allFiles = $Files
             $anonymous = [bool]$Anonymous
+            $script:imgchestUniqueUrls = @{}
 
             try {
                 if ($allFiles.Count -le 20) {
@@ -867,8 +868,11 @@ function Invoke-CatboxUpload {
                     $output += "Post URL: https://imgchest.com/p/$($postResp.data.id)"
 
                     foreach ($img in $postResp.data.images) {
-                        $output += $img.link
-                        Write-Host $img.link
+                        if (-not $script:imgchestUniqueUrls.ContainsKey($img.link)) {
+                            $script:imgchestUniqueUrls[$img.link] = $true
+                            $output += $img.link
+                            Write-Host $img.link
+                        }
                     }
                 } else {
                     $totalFiles = $allFiles.Count
@@ -883,8 +887,11 @@ function Invoke-CatboxUpload {
                     $output += "Post URL: https://imgchest.com/p/$postId"
 
                     foreach ($img in $postResp.data.images) {
-                        $output += $img.link
-                        Write-Host $img.link
+                        if (-not $script:imgchestUniqueUrls.ContainsKey($img.link)) {
+                            $script:imgchestUniqueUrls[$img.link] = $true
+                            $output += $img.link
+                            Write-Host $img.link
+                        }
                     }
 
                     $remainingCount = $remainingFiles.Count
@@ -899,8 +906,11 @@ function Invoke-CatboxUpload {
                         $addResp = Add-ImagesToImgchestPost -PostId $postId -FilePaths $batchFiles
 
                         foreach ($img in $addResp.data.images) {
-                            $output += $img.link
-                            Write-Host $img.link
+                            if (-not $script:imgchestUniqueUrls.ContainsKey($img.link)) {
+                                $script:imgchestUniqueUrls[$img.link] = $true
+                                $output += $img.link
+                                Write-Host $img.link
+                            }
                         }
 
                         $uploadedCount = $currentUploaded
@@ -1187,7 +1197,12 @@ if (-not $Files -and -not $Urls) {
                 }
                 
                 $totalInputs = $script:selectedFiles.Count + $(if ($urls) { $urls.Count } else { 0 })
-                $successfulUploads = ($output | Where-Object { $_ -match "^https?://" }).Count
+                
+                if ($provider -eq 'imgchest') {
+                    $successfulUploads = ($output | Where-Object { $_ -match "^https://cdn\.imgchest\.com/files/" }).Count
+                } else {
+                    $successfulUploads = ($output | Where-Object { $_ -match "^https?://" }).Count
+                }
                 $failedUploads = $totalInputs - $successfulUploads
                 
                 $summary = if ($failedUploads -gt 0) {
