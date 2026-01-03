@@ -507,6 +507,11 @@ function Create-ImgchestPost {
         try {
             $headersFile = [System.IO.Path]::GetTempFileName()
             
+            $anonValue = if ([bool]$Anonymous) { "true" } else { "false" }
+            $nsfwValue = if ([bool]$Nsfw) { "true" } else { "false" }
+            
+            Write-Verbose "Anonymous: $anonValue, NSFW: $nsfwValue"
+            
             $curlArgs = @(
                 '-s',
                 '--fail-with-body',
@@ -519,14 +524,19 @@ function Create-ImgchestPost {
             }
             
             $curlArgs += '-F', "privacy=$Privacy"
-            $curlArgs += '-F', "nsfw=$(if ($Nsfw) { 'true' } else { 'false' })"
-            $curlArgs += '-F', "anonymous=$(if ($Anonymous) { 'true' } else { 'false' })"
+            $curlArgs += '-F', "nsfw=$nsfwValue"
+            
+            if ($Anonymous) {
+                $curlArgs += '-F', 'anonymous=true'
+            }
             
             foreach ($path in $FilePaths) {
                 $curlArgs += '-F', "images[]=@`"$path`""
             }
             
             $curlArgs += 'https://api.imgchest.com/v1/post'
+            
+            Write-Verbose "Executing: curl.exe $($curlArgs -join ' ')"
             
             $resp = & curl.exe @curlArgs
             
@@ -551,7 +561,6 @@ function Create-ImgchestPost {
                 throw "API error: $($json.error -or $json.errors -join ', ')"
             }
             
-            # Track rate limit info globally and persist to file
             if ($headers['x-ratelimit-remaining'] -ne $null -and $headers['x-ratelimit-reset'] -ne $null) {
                 $script:imgchestRateLimit = @{
                     'remaining' = [int]$headers['x-ratelimit-remaining']
@@ -757,7 +766,7 @@ function Invoke-CatboxUpload {
             }
             
             $allFiles = $Files
-            $anonymous = if ($GuiMode) { $script:imgchestAnonymous } else { $Anonymous.ToBool() }
+            $anonymous = [bool]$Anonymous
             
             try {
                 Write-Host "Creating imgchest post with $($allFiles.Count) images..."
@@ -902,10 +911,6 @@ if (-not $Files -and -not $Urls) {
         $anonymousCheckbox.Location = New-Object System.Drawing.Point(10,380)
         $anonymousCheckbox.Size = New-Object System.Drawing.Size(150,20)
         $anonymousCheckbox.Checked = $false
-        $script:imgchestAnonymous = $false
-        $anonymousCheckbox.Add_CheckedChanged({
-            $script:imgchestAnonymous = $anonymousCheckbox.Checked
-        })
         
         # Helper to toggle anonymous checkbox based on provider
         $toggleAnonymousCheckbox = {
@@ -1034,9 +1039,24 @@ if (-not $Files -and -not $Urls) {
                 if (($provider -eq 'sxcu' -or $provider -eq 'imgchest') -and $urls) {
                     $output = @("Error: $($provider) provider does not support URL uploads.")
                 } else {
-                    $createCollectionSwitch = if ($createCollectionCheckbox.Checked) { [switch]$true } else { [switch]$false }
-                    $anonymousSwitch = if ($anonymousCheckbox.Checked) { [switch]$true } else { [switch]$false }
-                    $output = Invoke-CatboxUpload -Files $script:selectedFiles -Urls $urls -Title $titleTextBox.Text -Description $descTextBox.Text -Provider $provider -CreateCollection:$createCollectionSwitch -GuiMode -Anonymous:$anonymousSwitch
+                    $params = @{
+                        Files = $script:selectedFiles
+                        Urls = $urls
+                        Title = $titleTextBox.Text
+                        Description = $descTextBox.Text
+                        Provider = $provider
+                        GuiMode = $true
+                    }
+                    
+                    if ($createCollectionCheckbox.Checked) {
+                        $params.CreateCollection = $true
+                    }
+                    
+                    if ($anonymousCheckbox.Checked) {
+                        $params.Anonymous = $true
+                    }
+                    
+                    $output = Invoke-CatboxUpload @params
                 }
                 
                 $totalInputs = $script:selectedFiles.Count + $(if ($urls) { $urls.Count } else { 0 })
