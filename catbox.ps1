@@ -170,6 +170,18 @@ function Set-SxcuRateLimitToFile {
     }
 }
 
+function Test-SxcuAllowedFileType {
+    param(
+        [Parameter(Mandatory=$true)] [string]$Path
+    )
+    $allowedExtensions = @('.png', '.gif', '.jpeg', '.jpg', '.ico', '.bmp', '.tiff', '.tif', '.webm', '.webp')
+    $extension = [System.IO.Path]::GetExtension($Path).ToLower()
+    
+    if (-not $allowedExtensions.Contains($extension)) {
+        throw "File type '$extension' is not allowed. Allowed types: $($allowedExtensions -join ', ')"
+    }
+}
+
 function Upload-FileToSxcu {
     param(
         [Parameter(Mandatory=$true)] [string]$Path,
@@ -179,6 +191,9 @@ function Upload-FileToSxcu {
     if (-not (Test-Path -LiteralPath $Path)) {
         throw "File not found: $Path"
     }
+    
+    Test-SxcuAllowedFileType -Path $Path
+    
     Write-Verbose "Uploading file to sxcu: $Path"
     
     $retryCount = 0
@@ -187,7 +202,7 @@ function Upload-FileToSxcu {
     while ($retryCount -le $MaxRetries) {
         try {
             $headersFile = [System.IO.Path]::GetTempFileName()
-            $args = @("-s", "--fail-with-body", "-D", $headersFile, "-H", "User-Agent: sxcuUploader/1.0 (+https://github.com)", "-F", "file=@`"$Path`"")
+            $args = @("-s", "--fail-with-body", "-D", $headersFile, "-H", "User-Agent: sxcuUploader/1.0 (+https://github.com)", "-F", "file=@`"$Path`"", "-F", "noembed")
             if ($CollectionId) {
                 $args += @("-F", "collection=$CollectionId")
             }
@@ -591,7 +606,7 @@ if (-not $Files -and -not $Urls) {
             
             $openFileDialog = New-Object System.Windows.Forms.OpenFileDialog
             $openFileDialog.Multiselect = $true
-            $openFileDialog.Filter = "Image files (*.jpg;*.jpeg;*.png;*.gif;*.bmp)|*.jpg;*.jpeg;*.png;*.gif;*.bmp|All files (*.*)|*.*"
+            $openFileDialog.Filter = "Image files (*.jpg;*.jpeg;*.png;*.gif;*.bmp;*.ico;*.tif;*.tiff;*.webp)|*.jpg;*.jpeg;*.png;*.gif;*.bmp;*.ico;*.tif;*.tiff;*.webp|Video files (*.webm)|*.webm|All files (*.*)|*.*"
             if ($openFileDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
                 $openFileDialog.FileNames | ForEach-Object {
                     $script:selectedFiles += $_
