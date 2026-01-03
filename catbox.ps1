@@ -507,9 +507,9 @@ if (-not $Files -and -not $Urls) {
         $script:uploadCompleted = $false
         $form = New-Object System.Windows.Forms.Form
         $form.Text = "File Uploader"
-        $form.Size = New-Object System.Drawing.Size(400,540)
+        $form.Size = New-Object System.Drawing.Size(400,570)
         $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::Sizable
-        $form.MinimumSize = New-Object System.Drawing.Size(400,540)
+        $form.MinimumSize = New-Object System.Drawing.Size(400,570)
 
         # Provider selection
         $providerLabel = New-Object System.Windows.Forms.Label
@@ -574,17 +574,36 @@ if (-not $Files -and -not $Urls) {
         $fileListBox.Size = New-Object System.Drawing.Size(360,100)
         $fileListBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
         $form.Controls.Add($fileListBox)
+        
+        # Remove selected file button
+        $removeFileButton = New-Object System.Windows.Forms.Button
+        $removeFileButton.Text = "Remove Selected"
+        $removeFileButton.Location = New-Object System.Drawing.Point(10,170)
+        $removeFileButton.Size = New-Object System.Drawing.Size(120,25)
+        $removeFileButton.Add_Click({
+            $selectedIndex = $fileListBox.SelectedIndex
+            if ($selectedIndex -ge 0) {
+                $fileToRemove = $fileListBox.SelectedItem
+                $script:selectedFiles = $script:selectedFiles | Where-Object { $_ -ne $fileToRemove }
+                $fileListBox.Items.RemoveAt($selectedIndex)
+                
+                if ($script:selectedFiles.Count -eq 0) {
+                    $titleTextBox.Text = ""
+                }
+            }
+        })
+        $form.Controls.Add($removeFileButton)
 
         # URL label and text box
         $urlLabel = New-Object System.Windows.Forms.Label
         $urlLabel.Text = "URLs (comma-separated):"
-        $urlLabel.Location = New-Object System.Drawing.Point(10,175)
+        $urlLabel.Location = New-Object System.Drawing.Point(10,205)
         $urlLabel.Size = New-Object System.Drawing.Size(360,20)
         $urlLabel.Font = New-Object System.Drawing.Font("Microsoft Sans Serif", 8.25)
         $form.Controls.Add($urlLabel)
 
         $urlTextBox = New-Object System.Windows.Forms.TextBox
-        $urlTextBox.Location = New-Object System.Drawing.Point(10,195)
+        $urlTextBox.Location = New-Object System.Drawing.Point(10,225)
         $urlTextBox.Size = New-Object System.Drawing.Size(360,20)
         $urlTextBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
         $form.Controls.Add($urlTextBox)
@@ -592,14 +611,14 @@ if (-not $Files -and -not $Urls) {
         # Title
         $titleLabel = New-Object System.Windows.Forms.Label
         $titleLabel.Text = "Title:"
-        $titleLabel.Location = New-Object System.Drawing.Point(10,225)
+        $titleLabel.Location = New-Object System.Drawing.Point(10,255)
         $titleLabel.Size = New-Object System.Drawing.Size(360,20)
         $titleLabel.Font = New-Object System.Drawing.Font("Microsoft Sans Serif", 8.25)
         $form.Controls.Add($titleLabel)
 
         $titleTextBox = New-Object System.Windows.Forms.TextBox
         $titleTextBox.Text = ""
-        $titleTextBox.Location = New-Object System.Drawing.Point(10,245)
+        $titleTextBox.Location = New-Object System.Drawing.Point(10,275)
         $titleTextBox.Size = New-Object System.Drawing.Size(360,20)
         $titleTextBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
         $form.Controls.Add($titleTextBox)
@@ -607,13 +626,13 @@ if (-not $Files -and -not $Urls) {
         # Description
         $descLabel = New-Object System.Windows.Forms.Label
         $descLabel.Text = "Description:"
-        $descLabel.Location = New-Object System.Drawing.Point(10,275)
+        $descLabel.Location = New-Object System.Drawing.Point(10,305)
         $descLabel.Size = New-Object System.Drawing.Size(360,20)
         $descLabel.Font = New-Object System.Drawing.Font("Microsoft Sans Serif", 8.25)
         $form.Controls.Add($descLabel)
 
         $descTextBox = New-Object System.Windows.Forms.TextBox
-        $descTextBox.Location = New-Object System.Drawing.Point(10,295)
+        $descTextBox.Location = New-Object System.Drawing.Point(10,325)
         $descTextBox.Size = New-Object System.Drawing.Size(360,20)
         $descTextBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
         $form.Controls.Add($descTextBox)
@@ -621,7 +640,7 @@ if (-not $Files -and -not $Urls) {
         # Upload button
         $uploadButton = New-Object System.Windows.Forms.Button
         $uploadButton.Text = "Upload"
-        $uploadButton.Location = New-Object System.Drawing.Point(10,325)
+        $uploadButton.Location = New-Object System.Drawing.Point(10,355)
         $uploadButton.Add_Click({
             $uploadButton.Enabled = $false
             $uploadButton.Text = "Uploading..."
@@ -665,7 +684,7 @@ if (-not $Files -and -not $Urls) {
         $outputTextBox = New-Object System.Windows.Forms.TextBox
         $outputTextBox.Multiline = $true
         $outputTextBox.ScrollBars = "Vertical"
-        $outputTextBox.Location = New-Object System.Drawing.Point(10,355)
+        $outputTextBox.Location = New-Object System.Drawing.Point(10,385)
         $outputTextBox.Size = New-Object System.Drawing.Size(360,100)
         $outputTextBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
         $form.Controls.Add($outputTextBox)
