@@ -12,14 +12,17 @@
     [string]$Description = "",
 
     [Parameter(Mandatory=$false)]
-    [ValidateSet('catbox','sxcu')]
+    [ValidateSet('catbox','sxcu','imgchest')]
     [string]$Provider = 'catbox',
 
     [Parameter(Mandatory=$false)]
     [switch]$CreateCollection,
 
     [Parameter(Mandatory=$false)]
-    [switch]$VerboseOutput
+    [switch]$VerboseOutput,
+
+    [Parameter(Mandatory=$false)]
+    [switch]$Anonymous
 )
 
 function Upload-FileToCatbox {
@@ -166,9 +169,33 @@ function Set-SxcuRateLimitToFile {
             if ($retryCount -lt $maxRetries) {
                 Start-Sleep -Milliseconds 200
             }
+            }
         }
     }
-}
+
+    if ($Provider -eq 'imgchest') {
+        if ($Urls) {
+            Write-Host "Error: imgchest provider does not support URL uploads."
+            $output += "Error: imgchest provider does not support URL uploads."
+            return $output
+        }
+        
+        try {
+            Write-Host "Waiting for imgchest upload slot..."
+            $mutex = New-Object System.Threading.Mutex($false, "Global\CatboxImgchestUploadMutex")
+            $hasHandle = $mutex.WaitOne()
+            if (-not $hasHandle) {
+                throw "Could not acquire imgchest upload lock."
+            }
+            Write-Host "Acquired imgchest upload slot."
+        } catch {
+            Write-Host "Error: $($_.Exception.Message)"
+            $output += "Error: $($_.Exception.Message)"
+            if ($mutex) { $mutex.Close(); $mutex = $null }
+            return $output
+        }
+    }
+
 
 function Test-SxcuAllowedFileType {
     param(
@@ -316,6 +343,241 @@ function Clear-SxcuRateLimitFile {
     }
 }
 
+function Get-ImgchestToken {
+    $token = $env:IMGCHEST_API_TOKEN
+    if (-not $token) {
+        $configFile = Join-Path $env:APPDATA "catbox_imgchest_token.txt"
+        if (Test-Path $configFile) {
+            $token = Get-Content $configFile -Raw | ForEach-Object { $_.Trim() }
+        }
+    }
+    if (-not $token) {
+        throw "Imgchest API token not found. Set IMGCHEST_API_TOKEN environment variable or create $configFile with your token."
+    }
+    return $token
+}
+
+function Get-ImgchestRateLimitFromFile {
+    param()
+    $rateLimitFile = Join-Path $env:TEMP "catbox_imgchest_rate_limit.json"
+    $retryCount = 0
+    $maxRetries = 3
+    
+    while ($retryCount -lt $maxRetries) {
+        try {
+            if (Test-Path $rateLimitFile) {
+                $lockFile = $rateLimitFile + ".lock"
+                $lockAcquired = $false
+                try {
+                    while ($lockAcquired -eq $false) {
+                        if (-not (Test-Path $lockFile)) {
+                            New-Item -ItemType File -Path $lockFile -Force | Out-Null
+                            $lockAcquired = $true
+                        } else {
+                            Start-Sleep -Milliseconds 100
+                        }
+                    }
+                    
+                    $content = Get-Content $rateLimitFile -Raw
+                    $data = $content | ConvertFrom-Json
+                    return $data
+                } finally {
+                    if ($lockAcquired -and (Test-Path $lockFile)) {
+                        Remove-Item $lockFile -Force -ErrorAction SilentlyContinue
+                    }
+                }
+            }
+            break
+        } catch {
+            Write-Verbose "Failed to read rate limit file (attempt $($retryCount + 1)): $_"
+            $retryCount++
+            if ($retryCount -lt $maxRetries) {
+                Start-Sleep -Milliseconds 200
+            }
+        }
+    }
+    return $null
+}
+
+function Set-ImgchestRateLimitToFile {
+    param(
+        [int]$Remaining,
+        [int]$Reset
+    )
+    $rateLimitFile = Join-Path $env:TEMP "catbox_imgchest_rate_limit.json"
+    $retryCount = 0
+    $maxRetries = 3
+    
+    while ($retryCount -lt $maxRetries) {
+        try {
+            $lockFile = $rateLimitFile + ".lock"
+            $lockAcquired = $false
+            try {
+                while ($lockAcquired -eq $false) {
+                    if (-not (Test-Path $lockFile)) {
+                        New-Item -ItemType File -Path $lockFile -Force | Out-Null
+                        $lockAcquired = $true
+                    } else {
+                        Start-Sleep -Milliseconds 100
+                    }
+                }
+                
+                $data = @{
+                    'remaining' = $Remaining
+                    'reset' = $Reset
+                    'updated' = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+                } | ConvertTo-Json
+                Set-Content -Path $rateLimitFile -Value $data -Force
+                break
+            } finally {
+                if ($lockAcquired -and (Test-Path $lockFile)) {
+                    Remove-Item $lockFile -Force -ErrorAction SilentlyContinue
+                }
+            }
+        } catch {
+            Write-Verbose "Failed to write rate limit file (attempt $($retryCount + 1)): $_"
+            $retryCount++
+            if ($retryCount -lt $maxRetries) {
+                Start-Sleep -Milliseconds 200
+            }
+        }
+    }
+}
+
+function Clear-ImgchestRateLimitFile {
+    $rateLimitFile = Join-Path $env:TEMP "catbox_imgchest_rate_limit.json"
+    $lockFile = $rateLimitFile + ".lock"
+    $lockAcquired = $false
+    
+    try {
+        while ($lockAcquired -eq $false) {
+            if (-not (Test-Path $lockFile)) {
+                New-Item -ItemType File -Path $lockFile -Force | Out-Null
+                $lockAcquired = $true
+            } else {
+                Start-Sleep -Milliseconds 100
+            }
+        }
+        
+        if (Test-Path $rateLimitFile) {
+            Remove-Item $rateLimitFile -Force
+        }
+        if (Test-Path $lockFile) {
+            Remove-Item $lockFile -Force
+        }
+    } catch {
+        Write-Verbose "Failed to clear rate limit file: $_"
+        if (Test-Path $lockFile) {
+            Remove-Item $lockFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Create-ImgchestPost {
+    param(
+        [Parameter(Mandatory=$true)] [string[]]$FilePaths,
+        [Parameter(Mandatory=$false)] [string]$Title = "",
+        [Parameter(Mandatory=$false)] [bool]$Anonymous = $false,
+        [Parameter(Mandatory=$false)] [string]$Privacy = "hidden",
+        [Parameter(Mandatory=$false)] [bool]$Nsfw = $true,
+        [int]$MaxRetries = 3
+    )
+    
+    if ($FilePaths.Count -eq 0) {
+        throw "No files provided to create post."
+    }
+    
+    if ($FilePaths.Count -gt 20) {
+        throw "Maximum 20 images allowed per post."
+    }
+    
+    foreach ($path in $FilePaths) {
+        if (-not (Test-Path -LiteralPath $path)) {
+            throw "File not found: $path"
+        }
+    }
+    
+    $token = Get-ImgchestToken
+    Write-Verbose "Creating imgchest post with $($FilePaths.Count) images"
+    
+    $retryCount = 0
+    $baseDelay = 2
+    
+    while ($retryCount -le $MaxRetries) {
+        try {
+            $headersFile = [System.IO.Path]::GetTempFileName()
+            
+            $curlArgs = @(
+                '-s',
+                '--fail-with-body',
+                '-D', $headersFile,
+                '-H', "Authorization: Bearer $token"
+            )
+            
+            if ($Title) {
+                $curlArgs += '-F', "title=$Title"
+            }
+            
+            $curlArgs += '-F', "privacy=$Privacy"
+            $curlArgs += '-F', "nsfw=$(if ($Nsfw) { 'true' } else { 'false' })"
+            $curlArgs += '-F', "anonymous=$(if ($Anonymous) { 'true' } else { 'false' })"
+            
+            foreach ($path in $FilePaths) {
+                $curlArgs += '-F', "images[]=@`"$path`""
+            }
+            
+            $curlArgs += 'https://api.imgchest.com/v1/post'
+            
+            $resp = & curl.exe @curlArgs
+            
+            $headers = @{}
+            if (Test-Path $headersFile) {
+                Get-Content $headersFile | ForEach-Object {
+                    if ($_ -match ':\s*') {
+                        $key, $value = $_ -split ':\s*', 2
+                        $headers[$key.Trim().ToLower()] = $value.Trim()
+                    }
+                }
+                Remove-Item $headersFile -ErrorAction SilentlyContinue
+            }
+            
+            if ($LASTEXITCODE -ne 0) {
+                throw "curl failed: $resp"
+            }
+            
+            $json = $resp | ConvertFrom-Json
+            
+            if ($json.error -or $json.errors) {
+                throw "API error: $($json.error -or $json.errors -join ', ')"
+            }
+            
+            # Track rate limit info globally and persist to file
+            if ($headers['x-ratelimit-remaining'] -ne $null -and $headers['x-ratelimit-reset'] -ne $null) {
+                $script:imgchestRateLimit = @{
+                    'remaining' = [int]$headers['x-ratelimit-remaining']
+                    'reset' = [int]$headers['x-ratelimit-reset']
+                    'checked' = $true
+                }
+                Set-ImgchestRateLimitToFile -Remaining ([int]$headers['x-ratelimit-remaining']) -Reset ([int]$headers['x-ratelimit-reset'])
+            }
+            
+            return $json
+        } catch {
+            if ($_.Exception.Message -match "Rate limit" -and $retryCount -lt $MaxRetries) {
+                $retryCount++
+                $delay = $baseDelay * [Math]::Pow(2, $retryCount - 1)
+                Write-Host "Rate limit error. Retrying in ${delay}s (attempt $($retryCount + 1) of $($MaxRetries + 1))..."
+                Start-Sleep -Seconds $delay
+                continue
+            }
+            throw "Create post failed: $_"
+        }
+    }
+    
+    throw "Create post failed: Max retries exceeded"
+}
+
+
 function Invoke-CatboxUpload {
     param(
         [string[]]$Files,
@@ -325,7 +587,8 @@ function Invoke-CatboxUpload {
         [string]$Provider,
         [switch]$CreateCollection,
         [switch]$VerboseOutput,
-        [switch]$GuiMode
+        [switch]$GuiMode,
+        [switch]$Anonymous
     )
     $output = @()
     $uploadedUrls = @()
@@ -338,6 +601,13 @@ function Invoke-CatboxUpload {
         'reset' = $null
         'checked' = $false
     }
+    
+    $script:imgchestRateLimit = @{
+        'remaining' = $null
+        'reset' = $null
+        'checked' = $false
+    }
+
 
     if ($Provider -eq 'sxcu') {
         if ($Urls) {
@@ -462,7 +732,11 @@ function Invoke-CatboxUpload {
                         $fileUrl = $resp.url
                         $output += "$fileUrl"
                         Write-Host "$fileUrl"
+                    } elseif ($Provider -eq 'imgchest') {
+                        # imgchest doesn't support individual file uploads, all files go in one post
+                        # So we'll collect all files and create one post at the end
                     } else {
+
                         $fileUrl = Upload-FileToCatbox -Path $filePath
                         $uploadedUrls += $fileUrl
                         $output += "$fileUrl"
@@ -475,8 +749,36 @@ function Invoke-CatboxUpload {
             }
         }
 
+        if ($Provider -eq 'imgchest') {
+            if ($Files.Count -eq 0) {
+                Write-Host "No uploads completed. Exiting."
+                $output += "No uploads completed. Exiting."
+                return $output
+            }
+            
+            $allFiles = $Files
+            $anonymous = if ($GuiMode) { $script:imgchestAnonymous } else { $Anonymous.ToBool() }
+            
+            try {
+                Write-Host "Creating imgchest post with $($allFiles.Count) images..."
+                $postResp = Create-ImgchestPost -FilePaths $allFiles -Title $Title -Anonymous $anonymous -Privacy "hidden" -Nsfw $true
+                
+                Write-Host "Post URL: https://imgchest.com/p/$($postResp.data.id)"
+                $output += "Post URL: https://imgchest.com/p/$($postResp.data.id)"
+                
+                foreach ($img in $postResp.data.images) {
+                    $output += $img.link
+                    Write-Host $img.link
+                }
+            } catch {
+                Write-Host "Error: $($_.Exception.Message)"
+                $output += "Error: $($_.Exception.Message)"
+            }
+        }
+
         if ($Provider -eq 'catbox') {
             if ($Urls) {
+
                 foreach ($inputUrl in $Urls) {
                     try {
                         $uploadUrl = Upload-UrlToCatbox -Url $inputUrl
@@ -545,9 +847,9 @@ if (-not $Files -and -not $Urls) {
         $script:uploadCompleted = $false
         $form = New-Object System.Windows.Forms.Form
         $form.Text = "File Uploader"
-        $form.Size = New-Object System.Drawing.Size(400,600)
+        $form.Size = New-Object System.Drawing.Size(400,630)
         $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::Sizable
-        $form.MinimumSize = New-Object System.Drawing.Size(400,600)
+        $form.MinimumSize = New-Object System.Drawing.Size(400,630)
 
         # Provider selection
         $providerLabel = New-Object System.Windows.Forms.Label
@@ -558,14 +860,15 @@ if (-not $Files -and -not $Urls) {
         $form.Controls.Add($providerLabel)
 
         $providerComboBox = New-Object System.Windows.Forms.ComboBox
-        $providerComboBox.Items.AddRange(@("catbox", "sxcu"))
+        $providerComboBox.Items.AddRange(@("catbox", "sxcu", "imgchest"))
         $providerComboBox.SelectedIndex = 1
         $providerComboBox.Location = New-Object System.Drawing.Point(95,8)
         $providerComboBox.Size = New-Object System.Drawing.Size(275,20)
+
         
         # Helper to toggle URL fields based on provider
         $toggleUrlFields = {
-            if ($providerComboBox.SelectedItem -eq "sxcu") {
+            if ($providerComboBox.SelectedItem -eq "sxcu" -or $providerComboBox.SelectedItem -eq "imgchest") {
                 $urlLabel.Enabled = $false
                 $urlTextBox.Enabled = $false
                 $urlTextBox.Text = ""
@@ -574,6 +877,7 @@ if (-not $Files -and -not $Urls) {
                 $urlTextBox.Enabled = $true
             }
         }
+
 
         $providerComboBox.Add_SelectedIndexChanged($toggleUrlFields)
         $form.Controls.Add($providerComboBox)
@@ -591,8 +895,27 @@ if (-not $Files -and -not $Urls) {
         }
         $providerComboBox.Add_SelectedIndexChanged($toggleCollectionCheckbox)
         $form.Controls.Add($createCollectionCheckbox)
-
+        
+        # Anonymous checkbox for imgchest
+        $anonymousCheckbox = New-Object System.Windows.Forms.CheckBox
+        $anonymousCheckbox.Text = "Anonymous"
+        $anonymousCheckbox.Location = New-Object System.Drawing.Point(10,380)
+        $anonymousCheckbox.Size = New-Object System.Drawing.Size(150,20)
+        $anonymousCheckbox.Checked = $false
+        $script:imgchestAnonymous = $false
+        $anonymousCheckbox.Add_CheckedChanged({
+            $script:imgchestAnonymous = $anonymousCheckbox.Checked
+        })
+        
+        # Helper to toggle anonymous checkbox based on provider
+        $toggleAnonymousCheckbox = {
+            $anonymousCheckbox.Enabled = ($providerComboBox.SelectedItem -eq "imgchest")
+        }
+        $providerComboBox.Add_SelectedIndexChanged($toggleAnonymousCheckbox)
+        $form.Controls.Add($anonymousCheckbox)
+ 
         # File button
+
         $fileButton = New-Object System.Windows.Forms.Button
         $fileButton.Text = "Select Files"
         $fileButton.Location = New-Object System.Drawing.Point(10,35)
@@ -699,7 +1022,7 @@ if (-not $Files -and -not $Urls) {
         # Upload button
         $uploadButton = New-Object System.Windows.Forms.Button
         $uploadButton.Text = "Upload"
-        $uploadButton.Location = New-Object System.Drawing.Point(10,385)
+        $uploadButton.Location = New-Object System.Drawing.Point(10,410)
         $uploadButton.Add_Click({
             $uploadButton.Enabled = $false
             $uploadButton.Text = "Uploading..."
@@ -708,11 +1031,12 @@ if (-not $Files -and -not $Urls) {
                 $urls = if ($urlTextBox.Text) { $urlTextBox.Text -split ',' | ForEach-Object { $_.Trim() } } else { $null }
                 $provider = $providerComboBox.SelectedItem
                 
-                if ($provider -eq 'sxcu' -and $urls) {
-                    $output = @("Error: sxcu provider does not support URL uploads.")
+                if (($provider -eq 'sxcu' -or $provider -eq 'imgchest') -and $urls) {
+                    $output = @("Error: $($provider) provider does not support URL uploads.")
                 } else {
                     $createCollectionSwitch = if ($createCollectionCheckbox.Checked) { [switch]$true } else { [switch]$false }
-                    $output = Invoke-CatboxUpload -Files $script:selectedFiles -Urls $urls -Title $titleTextBox.Text -Description $descTextBox.Text -Provider $provider -CreateCollection:$createCollectionSwitch -GuiMode
+                    $anonymousSwitch = if ($anonymousCheckbox.Checked) { [switch]$true } else { [switch]$false }
+                    $output = Invoke-CatboxUpload -Files $script:selectedFiles -Urls $urls -Title $titleTextBox.Text -Description $descTextBox.Text -Provider $provider -CreateCollection:$createCollectionSwitch -GuiMode -Anonymous:$anonymousSwitch
                 }
                 
                 $totalInputs = $script:selectedFiles.Count + $(if ($urls) { $urls.Count } else { 0 })
@@ -744,7 +1068,7 @@ if (-not $Files -and -not $Urls) {
         $outputTextBox = New-Object System.Windows.Forms.TextBox
         $outputTextBox.Multiline = $true
         $outputTextBox.ScrollBars = "Vertical"
-        $outputTextBox.Location = New-Object System.Drawing.Point(10,415)
+        $outputTextBox.Location = New-Object System.Drawing.Point(10,440)
         $outputTextBox.Size = New-Object System.Drawing.Size(360,100)
         $outputTextBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
         $form.Controls.Add($outputTextBox)
@@ -753,6 +1077,7 @@ if (-not $Files -and -not $Urls) {
         $form.Add_Load({
             & $toggleUrlFields
             & $toggleCollectionCheckbox
+            & $toggleAnonymousCheckbox
         })
         
         # Delete key handler
@@ -769,6 +1094,6 @@ if (-not $Files -and -not $Urls) {
         Write-Host "GUI Error: $_"
     }
 } else {
-    $output = Invoke-CatboxUpload -Files $Files -Urls $Urls -Title $Title -Description $Description -Provider $Provider -CreateCollection:$CreateCollection -VerboseOutput:$VerboseOutput
+    $output = Invoke-CatboxUpload -Files $Files -Urls $Urls -Title $Title -Description $Description -Provider $Provider -CreateCollection:$CreateCollection -VerboseOutput:$VerboseOutput -Anonymous:$Anonymous
     $output | ForEach-Object { Write-Output $_ }
 }
