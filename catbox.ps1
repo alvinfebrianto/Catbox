@@ -527,7 +527,7 @@ function Create-ImgchestPost {
             $curlArgs += '-F', "nsfw=$nsfwValue"
             
             if ($Anonymous) {
-                $curlArgs += '-F', 'anonymous=true'
+                $curlArgs += '-F', 'anonymous=1'
             }
             
             foreach ($path in $FilePaths) {
