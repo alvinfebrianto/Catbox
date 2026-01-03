@@ -202,11 +202,11 @@ function Upload-FileToSxcu {
     while ($retryCount -le $MaxRetries) {
         try {
             $headersFile = [System.IO.Path]::GetTempFileName()
-            $args = @("-s", "--fail-with-body", "-D", $headersFile, "-H", "User-Agent: sxcuUploader/1.0 (+https://github.com)", "-F", "file=@`"$Path`"", "-F", "noembed")
             if ($CollectionId) {
-                $args += @("-F", "collection=$CollectionId")
+                $resp = & curl.exe -s --fail-with-body -D $headersFile -H "User-Agent: sxcuUploader/1.0 (+https://github.com)" -F "file=@`"$Path`"" -F "noembed=" -F "collection=$CollectionId" https://sxcu.net/api/files/create
+            } else {
+                $resp = & curl.exe -s --fail-with-body -D $headersFile -H "User-Agent: sxcuUploader/1.0 (+https://github.com)" -F "file=@`"$Path`"" -F "noembed=" https://sxcu.net/api/files/create
             }
-            $resp = & curl.exe $args https://sxcu.net/api/files/create
 
             # Parse response headers
             $headers = @{}
