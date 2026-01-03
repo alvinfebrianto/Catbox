@@ -647,6 +647,10 @@ function Add-ImagesToImgchestPost {
 
             $json = $resp | ConvertFrom-Json
 
+            if ($json.success -eq "false") {
+                throw "Unable to add images to anonymous post. Imgchest API does not support adding images to anonymous posts."
+            }
+
             if ($json.error -or $json.errors) {
                 throw "API error: $($json.error -or $json.errors -join ', ')"
             }
@@ -863,6 +867,24 @@ function Invoke-CatboxUpload {
                 if ($allFiles.Count -le 20) {
                     Write-Host "Creating imgchest post with $($allFiles.Count) images..."
                     $postResp = Create-ImgchestPost -FilePaths $allFiles -Title $Title -Anonymous $anonymous -Privacy "hidden" -Nsfw $true
+
+                    Write-Host "Post URL: https://imgchest.com/p/$($postResp.data.id)"
+                    $output += "Post URL: https://imgchest.com/p/$($postResp.data.id)"
+
+                    foreach ($img in $postResp.data.images) {
+                        if (-not $script:imgchestUniqueUrls.ContainsKey($img.link)) {
+                            $script:imgchestUniqueUrls[$img.link] = $true
+                            $output += $img.link
+                            Write-Host $img.link
+                        }
+                    }
+                } elseif ($anonymous) {
+                    Write-Host "Warning: Anonymous posts only support up to 20 images. Only the first 20 files will be uploaded."
+                    $output += "Warning: Anonymous posts only support up to 20 images. Only the first 20 files will be uploaded."
+
+                    $firstBatch = $allFiles[0..19]
+                    Write-Host "Creating imgchest post with 20 images..."
+                    $postResp = Create-ImgchestPost -FilePaths $firstBatch -Title $Title -Anonymous $anonymous -Privacy "hidden" -Nsfw $true
 
                     Write-Host "Post URL: https://imgchest.com/p/$($postResp.data.id)"
                     $output += "Post URL: https://imgchest.com/p/$($postResp.data.id)"
