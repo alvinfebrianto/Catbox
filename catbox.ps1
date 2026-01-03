@@ -174,12 +174,12 @@ function Set-SxcuRateLimitToFile {
     }
 
     if ($Provider -eq 'imgchest') {
-        if ($Urls) {
-            Write-Host "Error: imgchest provider does not support URL uploads."
-            $output += "Error: imgchest provider does not support URL uploads."
+        if ($Files.Count -eq 0) {
+            Write-Host "No uploads completed. Exiting."
+            $output += "No uploads completed. Exiting."
             return $output
         }
-        
+
         try {
             Write-Host "Waiting for imgchest upload slot..."
             $mutex = New-Object System.Threading.Mutex($false, "Global\CatboxImgchestUploadMutex")
@@ -362,7 +362,7 @@ function Get-ImgchestRateLimitFromFile {
     $rateLimitFile = Join-Path $env:TEMP "catbox_imgchest_rate_limit.json"
     $retryCount = 0
     $maxRetries = 3
-    
+
     while ($retryCount -lt $maxRetries) {
         try {
             if (Test-Path $rateLimitFile) {
@@ -377,10 +377,24 @@ function Get-ImgchestRateLimitFromFile {
                             Start-Sleep -Milliseconds 100
                         }
                     }
-                    
+
                     $content = Get-Content $rateLimitFile -Raw
                     $data = $content | ConvertFrom-Json
-                    return $data
+
+                    $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+                    $windowStart = $data.windowStart
+                    $elapsed = $now - $windowStart
+
+                    if ($elapsed -ge 60) {
+                        return $null
+                    }
+
+                    return @{
+                        'remaining' = $data.remaining
+                        'limit' = $data.limit
+                        'windowStart' = $windowStart
+                        'elapsed' = $elapsed
+                    }
                 } finally {
                     if ($lockAcquired -and (Test-Path $lockFile)) {
                         Remove-Item $lockFile -Force -ErrorAction SilentlyContinue
@@ -402,12 +416,12 @@ function Get-ImgchestRateLimitFromFile {
 function Set-ImgchestRateLimitToFile {
     param(
         [int]$Remaining,
-        [int]$Reset
+        [int]$Limit
     )
     $rateLimitFile = Join-Path $env:TEMP "catbox_imgchest_rate_limit.json"
     $retryCount = 0
     $maxRetries = 3
-    
+
     while ($retryCount -lt $maxRetries) {
         try {
             $lockFile = $rateLimitFile + ".lock"
@@ -421,11 +435,11 @@ function Set-ImgchestRateLimitToFile {
                         Start-Sleep -Milliseconds 100
                     }
                 }
-                
+
                 $data = @{
                     'remaining' = $Remaining
-                    'reset' = $Reset
-                    'updated' = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+                    'limit' = $Limit
+                    'windowStart' = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
                 } | ConvertTo-Json
                 Set-Content -Path $rateLimitFile -Value $data -Force
                 break
@@ -557,13 +571,13 @@ function Create-ImgchestPost {
                 throw "API error: $($json.error -or $json.errors -join ', ')"
             }
 
-            if ($headers['x-ratelimit-remaining'] -ne $null -and $headers['x-ratelimit-reset'] -ne $null) {
+            if ($headers['x-ratelimit-remaining'] -ne $null -and $headers['x-ratelimit-limit'] -ne $null) {
                 $script:imgchestRateLimit = @{
                     'remaining' = [int]$headers['x-ratelimit-remaining']
-                    'reset' = [int]$headers['x-ratelimit-reset']
+                    'limit' = [int]$headers['x-ratelimit-limit']
                     'checked' = $true
                 }
-                Set-ImgchestRateLimitToFile -Remaining ([int]$headers['x-ratelimit-remaining']) -Reset ([int]$headers['x-ratelimit-reset'])
+                Set-ImgchestRateLimitToFile -Remaining ([int]$headers['x-ratelimit-remaining']) -Limit ([int]$headers['x-ratelimit-limit'])
             }
 
             return $json
@@ -655,13 +669,13 @@ function Add-ImagesToImgchestPost {
                 throw "API error: $($json.error -or $json.errors -join ', ')"
             }
 
-            if ($headers['x-ratelimit-remaining'] -ne $null -and $headers['x-ratelimit-reset'] -ne $null) {
+            if ($headers['x-ratelimit-remaining'] -ne $null -and $headers['x-ratelimit-limit'] -ne $null) {
                 $script:imgchestRateLimit = @{
                     'remaining' = [int]$headers['x-ratelimit-remaining']
-                    'reset' = [int]$headers['x-ratelimit-reset']
+                    'limit' = [int]$headers['x-ratelimit-limit']
                     'checked' = $true
                 }
-                Set-ImgchestRateLimitToFile -Remaining ([int]$headers['x-ratelimit-remaining']) -Reset ([int]$headers['x-ratelimit-reset'])
+                Set-ImgchestRateLimitToFile -Remaining ([int]$headers['x-ratelimit-remaining']) -Limit ([int]$headers['x-ratelimit-limit'])
             }
 
             return $json
@@ -707,7 +721,7 @@ function Invoke-CatboxUpload {
     
     $script:imgchestRateLimit = @{
         'remaining' = $null
-        'reset' = $null
+        'limit' = $null
         'checked' = $false
     }
 
@@ -863,6 +877,54 @@ function Invoke-CatboxUpload {
             $anonymous = [bool]$Anonymous
             $script:imgchestUniqueUrls = @{}
 
+            $rateLimitChecked = $false
+            $maxRateLimitChecks = 5
+            $checkCount = 0
+
+            while (-not $rateLimitChecked -and $checkCount -lt $maxRateLimitChecks) {
+                $sharedRateLimit = Get-ImgchestRateLimitFromFile
+                if ($sharedRateLimit -ne $null) {
+                    $remaining = $sharedRateLimit.remaining
+                    $elapsed = $sharedRateLimit.elapsed
+                    $windowStart = $sharedRateLimit.windowStart
+                    $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+
+                    if ($remaining -le 0) {
+                        $waitSeconds = 60 - $elapsed + 1
+                        if ($waitSeconds -le 0) {
+                            Clear-ImgchestRateLimitFile
+                            $rateLimitChecked = $true
+                        } else {
+                            Write-Host "Rate limit exhausted ($remaining/$($sharedRateLimit.limit) in current minute). Waiting ${waitSeconds}s until new minute..."
+                            Start-Sleep -Seconds $waitSeconds
+                            $checkCount++
+                            continue
+                        }
+                    } else {
+                        $rateLimitChecked = $true
+                    }
+                } elseif ($null -ne $script:imgchestRateLimit -and $script:imgchestRateLimit['checked']) {
+                    $remaining = $script:imgchestRateLimit['remaining']
+                    $limit = $script:imgchestRateLimit['limit']
+                    $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+
+                    if ($remaining -le 0) {
+                        Write-Host "Rate limit exhausted (memory: $remaining/$limit). Waiting 60s until new minute..."
+                        Start-Sleep -Seconds 60
+                        $checkCount++
+                        continue
+                    } else {
+                        $rateLimitChecked = $true
+                    }
+                } else {
+                    $rateLimitChecked = $true
+                }
+            }
+
+            if (-not $rateLimitChecked) {
+                Write-Host "Warning: Could not verify rate limit status, proceeding with upload..."
+            }
+
             try {
                 if ($allFiles.Count -le 20) {
                     Write-Host "Creating imgchest post with $($allFiles.Count) images..."
@@ -996,7 +1058,7 @@ function Invoke-CatboxUpload {
         }
     } finally {
         if ($mutex) {
-            Write-Host "Releasing sxcu upload slot."
+            Write-Host "Releasing upload slot."
             $mutex.ReleaseMutex()
             $mutex.Close()
             $mutex = $null
