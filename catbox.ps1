@@ -1,4 +1,4 @@
-param(
+ param(
     [Parameter(Mandatory=$false)]
     [string[]]$Files,
 
@@ -14,6 +14,9 @@ param(
     [Parameter(Mandatory=$false)]
     [ValidateSet('catbox','sxcu')]
     [string]$Provider = 'catbox',
+
+    [Parameter(Mandatory=$false)]
+    [switch]$CreateCollection,
 
     [Parameter(Mandatory=$false)]
     [switch]$VerboseOutput
@@ -305,6 +308,7 @@ function Invoke-CatboxUpload {
         [string]$Title,
         [string]$Description,
         [string]$Provider,
+        [switch]$CreateCollection,
         [switch]$VerboseOutput,
         [switch]$GuiMode
     )
@@ -327,32 +331,51 @@ function Invoke-CatboxUpload {
             return $output
         }
 
-        # Acquire cross-process mutex for sxcu - extended scope for entire upload process
-        try {
-            Write-Host "Waiting for sxcu upload slot..."
-            $mutex = New-Object System.Threading.Mutex($false, "Global\CatboxSxcuUploadMutex")
-            $hasHandle = $mutex.WaitOne()
-            if (-not $hasHandle) {
-                throw "Could not acquire sxcu upload lock."
+        # Only create collection if requested
+        if ($CreateCollection) {
+            # Acquire cross-process mutex for sxcu - extended scope for entire upload process
+            try {
+                Write-Host "Waiting for sxcu upload slot..."
+                $mutex = New-Object System.Threading.Mutex($false, "Global\CatboxSxcuUploadMutex")
+                $hasHandle = $mutex.WaitOne()
+                if (-not $hasHandle) {
+                    throw "Could not acquire sxcu upload lock."
+                }
+                Write-Host "Acquired sxcu upload slot."
+            } catch {
+                Write-Host "Error: $($_.Exception.Message)"
+                $output += "Error: $($_.Exception.Message)"
+                if ($mutex) { $mutex.Close(); $mutex = $null }
+                return $output
             }
-            Write-Host "Acquired sxcu upload slot."
-        } catch {
-            Write-Host "Error: $($_.Exception.Message)"
-            $output += "Error: $($_.Exception.Message)"
-            if ($mutex) { $mutex.Close(); $mutex = $null }
-            return $output
-        }
 
-        try {
-            $coll = Create-SxcuCollection -Title $Title -Desc $Description
-            $collectionId = $coll.collection_id
-            Write-Host "Created collection: https://sxcu.net/c/$collectionId"
-            $output += "Created collection: https://sxcu.net/c/$collectionId"
-        } catch {
-            Write-Host "Error: $($_.Exception.Message)"
-            $output += "Error: $($_.Exception.Message)"
-            if ($mutex) { $mutex.ReleaseMutex(); $mutex.Close(); $mutex = $null }
-            return $output
+            try {
+                $coll = Create-SxcuCollection -Title $Title -Desc $Description
+                $collectionId = $coll.collection_id
+                Write-Host "Created collection: https://sxcu.net/c/$collectionId"
+                $output += "Created collection: https://sxcu.net/c/$collectionId"
+            } catch {
+                Write-Host "Error: $($_.Exception.Message)"
+                $output += "Error: $($_.Exception.Message)"
+                if ($mutex) { $mutex.ReleaseMutex(); $mutex.Close(); $mutex = $null }
+                return $output
+            }
+        } else {
+            # Still need mutex for individual uploads
+            try {
+                Write-Host "Waiting for sxcu upload slot..."
+                $mutex = New-Object System.Threading.Mutex($false, "Global\CatboxSxcuUploadMutex")
+                $hasHandle = $mutex.WaitOne()
+                if (-not $hasHandle) {
+                    throw "Could not acquire sxcu upload lock."
+                }
+                Write-Host "Acquired sxcu upload slot."
+            } catch {
+                Write-Host "Error: $($_.Exception.Message)"
+                $output += "Error: $($_.Exception.Message)"
+                if ($mutex) { $mutex.Close(); $mutex = $null }
+                return $output
+            }
         }
     }
 
@@ -507,9 +530,9 @@ if (-not $Files -and -not $Urls) {
         $script:uploadCompleted = $false
         $form = New-Object System.Windows.Forms.Form
         $form.Text = "File Uploader"
-        $form.Size = New-Object System.Drawing.Size(400,570)
+        $form.Size = New-Object System.Drawing.Size(400,600)
         $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::Sizable
-        $form.MinimumSize = New-Object System.Drawing.Size(400,570)
+        $form.MinimumSize = New-Object System.Drawing.Size(400,600)
 
         # Provider selection
         $providerLabel = New-Object System.Windows.Forms.Label
@@ -539,6 +562,20 @@ if (-not $Files -and -not $Urls) {
 
         $providerComboBox.Add_SelectedIndexChanged($toggleUrlFields)
         $form.Controls.Add($providerComboBox)
+
+        # Create collection checkbox
+        $createCollectionCheckbox = New-Object System.Windows.Forms.CheckBox
+        $createCollectionCheckbox.Text = "Create collection"
+        $createCollectionCheckbox.Location = New-Object System.Drawing.Point(10,355)
+        $createCollectionCheckbox.Size = New-Object System.Drawing.Size(150,20)
+        $createCollectionCheckbox.Checked = $false
+
+        # Helper to toggle collection checkbox based on provider
+        $toggleCollectionCheckbox = {
+            $createCollectionCheckbox.Enabled = ($providerComboBox.SelectedItem -eq "sxcu")
+        }
+        $providerComboBox.Add_SelectedIndexChanged($toggleCollectionCheckbox)
+        $form.Controls.Add($createCollectionCheckbox)
 
         # File button
         $fileButton = New-Object System.Windows.Forms.Button
@@ -647,7 +684,7 @@ if (-not $Files -and -not $Urls) {
         # Upload button
         $uploadButton = New-Object System.Windows.Forms.Button
         $uploadButton.Text = "Upload"
-        $uploadButton.Location = New-Object System.Drawing.Point(10,355)
+        $uploadButton.Location = New-Object System.Drawing.Point(10,385)
         $uploadButton.Add_Click({
             $uploadButton.Enabled = $false
             $uploadButton.Text = "Uploading..."
@@ -659,7 +696,8 @@ if (-not $Files -and -not $Urls) {
                 if ($provider -eq 'sxcu' -and $urls) {
                     $output = @("Error: sxcu provider does not support URL uploads.")
                 } else {
-                    $output = Invoke-CatboxUpload -Files $script:selectedFiles -Urls $urls -Title $titleTextBox.Text -Description $descTextBox.Text -Provider $provider -GuiMode
+                    $createCollectionSwitch = if ($createCollectionCheckbox.Checked) { [switch]$true } else { [switch]$false }
+                    $output = Invoke-CatboxUpload -Files $script:selectedFiles -Urls $urls -Title $titleTextBox.Text -Description $descTextBox.Text -Provider $provider -CreateCollection:$createCollectionSwitch -GuiMode
                 }
                 
                 $totalInputs = $script:selectedFiles.Count + $(if ($urls) { $urls.Count } else { 0 })
@@ -691,7 +729,7 @@ if (-not $Files -and -not $Urls) {
         $outputTextBox = New-Object System.Windows.Forms.TextBox
         $outputTextBox.Multiline = $true
         $outputTextBox.ScrollBars = "Vertical"
-        $outputTextBox.Location = New-Object System.Drawing.Point(10,385)
+        $outputTextBox.Location = New-Object System.Drawing.Point(10,415)
         $outputTextBox.Size = New-Object System.Drawing.Size(360,100)
         $outputTextBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
         $form.Controls.Add($outputTextBox)
@@ -699,6 +737,7 @@ if (-not $Files -and -not $Urls) {
         # Initial toggle
         $form.Add_Load({
             & $toggleUrlFields
+            & $toggleCollectionCheckbox
         })
         
         # Delete key handler
@@ -715,6 +754,6 @@ if (-not $Files -and -not $Urls) {
         Write-Host "GUI Error: $_"
     }
 } else {
-    $output = Invoke-CatboxUpload -Files $Files -Urls $Urls -Title $Title -Description $Description -Provider $Provider -VerboseOutput:$VerboseOutput
+    $output = Invoke-CatboxUpload -Files $Files -Urls $Urls -Title $Title -Description $Description -Provider $Provider -CreateCollection:$CreateCollection -VerboseOutput:$VerboseOutput
     $output | ForEach-Object { Write-Output $_ }
 }
