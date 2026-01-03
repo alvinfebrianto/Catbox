@@ -482,64 +482,60 @@ function Create-ImgchestPost {
         [Parameter(Mandatory=$false)] [bool]$Nsfw = $true,
         [int]$MaxRetries = 3
     )
-    
+
     if ($FilePaths.Count -eq 0) {
         throw "No files provided to create post."
     }
-    
-    if ($FilePaths.Count -gt 20) {
-        throw "Maximum 20 images allowed per post."
-    }
-    
+
     foreach ($path in $FilePaths) {
         if (-not (Test-Path -LiteralPath $path)) {
             throw "File not found: $path"
         }
     }
-    
+
     $token = Get-ImgchestToken
     Write-Verbose "Creating imgchest post with $($FilePaths.Count) images"
-    
+
     $retryCount = 0
     $baseDelay = 2
-    
+
     while ($retryCount -le $MaxRetries) {
         try {
             $headersFile = [System.IO.Path]::GetTempFileName()
-            
+
             $anonValue = if ([bool]$Anonymous) { "true" } else { "false" }
             $nsfwValue = if ([bool]$Nsfw) { "true" } else { "false" }
-            
+
             Write-Verbose "Anonymous: $anonValue, NSFW: $nsfwValue"
-            
+
             $curlArgs = @(
                 '-s',
                 '--fail-with-body',
                 '-D', $headersFile,
                 '-H', "Authorization: Bearer $token"
             )
-            
+
             if ($Title) {
                 $curlArgs += '-F', "title=$Title"
             }
-            
+
             $curlArgs += '-F', "privacy=$Privacy"
             $curlArgs += '-F', "nsfw=$nsfwValue"
-            
+
             if ($Anonymous) {
                 $curlArgs += '-F', 'anonymous=1'
             }
-            
+
             foreach ($path in $FilePaths) {
                 $curlArgs += '-F', "images[]=@`"$path`""
             }
-            
+
             $curlArgs += 'https://api.imgchest.com/v1/post'
-            
+
             Write-Verbose "Executing: curl.exe $($curlArgs -join ' ')"
-            
+
             $resp = & curl.exe @curlArgs
-            
+
             $headers = @{}
             if (Test-Path $headersFile) {
                 Get-Content $headersFile | ForEach-Object {
@@ -550,17 +546,17 @@ function Create-ImgchestPost {
                 }
                 Remove-Item $headersFile -ErrorAction SilentlyContinue
             }
-            
+
             if ($LASTEXITCODE -ne 0) {
                 throw "curl failed: $resp"
             }
-            
+
             $json = $resp | ConvertFrom-Json
-            
+
             if ($json.error -or $json.errors) {
                 throw "API error: $($json.error -or $json.errors -join ', ')"
             }
-            
+
             if ($headers['x-ratelimit-remaining'] -ne $null -and $headers['x-ratelimit-reset'] -ne $null) {
                 $script:imgchestRateLimit = @{
                     'remaining' = [int]$headers['x-ratelimit-remaining']
@@ -569,7 +565,7 @@ function Create-ImgchestPost {
                 }
                 Set-ImgchestRateLimitToFile -Remaining ([int]$headers['x-ratelimit-remaining']) -Reset ([int]$headers['x-ratelimit-reset'])
             }
-            
+
             return $json
         } catch {
             if ($_.Exception.Message -match "Rate limit" -and $retryCount -lt $MaxRetries) {
@@ -582,8 +578,102 @@ function Create-ImgchestPost {
             throw "Create post failed: $_"
         }
     }
-    
+
     throw "Create post failed: Max retries exceeded"
+}
+
+function Add-ImagesToImgchestPost {
+    param(
+        [Parameter(Mandatory=$true)] [string]$PostId,
+        [Parameter(Mandatory=$true)] [string[]]$FilePaths,
+        [int]$MaxRetries = 3
+    )
+
+    if ($FilePaths.Count -eq 0) {
+        throw "No files provided to add to post."
+    }
+
+    if ($FilePaths.Count -gt 20) {
+        throw "Maximum 20 images allowed per batch."
+    }
+
+    foreach ($path in $FilePaths) {
+        if (-not (Test-Path -LiteralPath $path)) {
+            throw "File not found: $path"
+        }
+    }
+
+    $token = Get-ImgchestToken
+    Write-Verbose "Adding $($FilePaths.Count) images to imgchest post $PostId"
+
+    $retryCount = 0
+    $baseDelay = 2
+
+    while ($retryCount -le $MaxRetries) {
+        try {
+            $headersFile = [System.IO.Path]::GetTempFileName()
+
+            $curlArgs = @(
+                '-s',
+                '--fail-with-body',
+                '-D', $headersFile,
+                '-H', "Authorization: Bearer $token"
+            )
+
+            foreach ($path in $FilePaths) {
+                $curlArgs += '-F', "images[]=@`"$path`""
+            }
+
+            $curlArgs += "https://api.imgchest.com/v1/post/$PostId/add"
+
+            Write-Verbose "Executing: curl.exe $($curlArgs -join ' ')"
+
+            $resp = & curl.exe @curlArgs
+
+            $headers = @{}
+            if (Test-Path $headersFile) {
+                Get-Content $headersFile | ForEach-Object {
+                    if ($_ -match ':\s*') {
+                        $key, $value = $_ -split ':\s*', 2
+                        $headers[$key.Trim().ToLower()] = $value.Trim()
+                    }
+                }
+                Remove-Item $headersFile -ErrorAction SilentlyContinue
+            }
+
+            if ($LASTEXITCODE -ne 0) {
+                throw "curl failed: $resp"
+            }
+
+            $json = $resp | ConvertFrom-Json
+
+            if ($json.error -or $json.errors) {
+                throw "API error: $($json.error -or $json.errors -join ', ')"
+            }
+
+            if ($headers['x-ratelimit-remaining'] -ne $null -and $headers['x-ratelimit-reset'] -ne $null) {
+                $script:imgchestRateLimit = @{
+                    'remaining' = [int]$headers['x-ratelimit-remaining']
+                    'reset' = [int]$headers['x-ratelimit-reset']
+                    'checked' = $true
+                }
+                Set-ImgchestRateLimitToFile -Remaining ([int]$headers['x-ratelimit-remaining']) -Reset ([int]$headers['x-ratelimit-reset'])
+            }
+
+            return $json
+        } catch {
+            if ($_.Exception.Message -match "Rate limit" -and $retryCount -lt $MaxRetries) {
+                $retryCount++
+                $delay = $baseDelay * [Math]::Pow(2, $retryCount - 1)
+                Write-Host "Rate limit error. Retrying in ${delay}s (attempt $($retryCount + 1) of $($MaxRetries + 1))..."
+                Start-Sleep -Seconds $delay
+                continue
+            }
+            throw "Add images failed: $_"
+        }
+    }
+
+    throw "Add images failed: Max retries exceeded"
 }
 
 
@@ -764,20 +854,57 @@ function Invoke-CatboxUpload {
                 $output += "No uploads completed. Exiting."
                 return $output
             }
-            
+
             $allFiles = $Files
             $anonymous = [bool]$Anonymous
-            
+
             try {
-                Write-Host "Creating imgchest post with $($allFiles.Count) images..."
-                $postResp = Create-ImgchestPost -FilePaths $allFiles -Title $Title -Anonymous $anonymous -Privacy "hidden" -Nsfw $true
-                
-                Write-Host "Post URL: https://imgchest.com/p/$($postResp.data.id)"
-                $output += "Post URL: https://imgchest.com/p/$($postResp.data.id)"
-                
-                foreach ($img in $postResp.data.images) {
-                    $output += $img.link
-                    Write-Host $img.link
+                if ($allFiles.Count -le 20) {
+                    Write-Host "Creating imgchest post with $($allFiles.Count) images..."
+                    $postResp = Create-ImgchestPost -FilePaths $allFiles -Title $Title -Anonymous $anonymous -Privacy "hidden" -Nsfw $true
+
+                    Write-Host "Post URL: https://imgchest.com/p/$($postResp.data.id)"
+                    $output += "Post URL: https://imgchest.com/p/$($postResp.data.id)"
+
+                    foreach ($img in $postResp.data.images) {
+                        $output += $img.link
+                        Write-Host $img.link
+                    }
+                } else {
+                    $totalFiles = $allFiles.Count
+                    $firstBatch = $allFiles[0..19]
+                    $remainingFiles = $allFiles[20..($totalFiles - 1)]
+
+                    Write-Host "Creating imgchest post with first 20 of $totalFiles images..."
+                    $postResp = Create-ImgchestPost -FilePaths $firstBatch -Title $Title -Anonymous $anonymous -Privacy "hidden" -Nsfw $true
+                    $postId = $postResp.data.id
+
+                    Write-Host "Post URL: https://imgchest.com/p/$postId"
+                    $output += "Post URL: https://imgchest.com/p/$postId"
+
+                    foreach ($img in $postResp.data.images) {
+                        $output += $img.link
+                        Write-Host $img.link
+                    }
+
+                    $remainingCount = $remainingFiles.Count
+                    $uploadedCount = 20
+
+                    for ($i = 0; $i -lt $remainingCount; $i += 20) {
+                        $batchSize = [Math]::Min(20, $remainingCount - $i)
+                        $batchFiles = $remainingFiles[$i..($i + $batchSize - 1)]
+                        $currentUploaded = $uploadedCount + $batchSize
+
+                        Write-Host "Adding images $($uploadedCount + 1) to $currentUploaded of $totalFiles to post..."
+                        $addResp = Add-ImagesToImgchestPost -PostId $postId -FilePaths $batchFiles
+
+                        foreach ($img in $addResp.data.images) {
+                            $output += $img.link
+                            Write-Host $img.link
+                        }
+
+                        $uploadedCount = $currentUploaded
+                    }
                 }
             } catch {
                 Write-Host "Error: $($_.Exception.Message)"
@@ -870,7 +997,7 @@ if (-not $Files -and -not $Urls) {
 
         $providerComboBox = New-Object System.Windows.Forms.ComboBox
         $providerComboBox.Items.AddRange(@("catbox", "sxcu", "imgchest"))
-        $providerComboBox.SelectedIndex = 1
+        $providerComboBox.SelectedIndex = 2
         $providerComboBox.Location = New-Object System.Drawing.Point(95,8)
         $providerComboBox.Size = New-Object System.Drawing.Size(275,20)
 
