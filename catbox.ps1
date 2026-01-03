@@ -572,26 +572,33 @@ if (-not $Files -and -not $Urls) {
         $fileListBox = New-Object System.Windows.Forms.ListBox
         $fileListBox.Location = New-Object System.Drawing.Point(10,65)
         $fileListBox.Size = New-Object System.Drawing.Size(360,100)
+        $fileListBox.SelectionMode = [System.Windows.Forms.SelectionMode]::MultiExtended
         $fileListBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
         $form.Controls.Add($fileListBox)
+        
+        # Remove selected files function
+        $removeSelectedFiles = {
+            if ($fileListBox.SelectedIndices.Count -gt 0) {
+                $filesToRemove = @($fileListBox.SelectedItems)
+                foreach ($file in $filesToRemove) {
+                    $script:selectedFiles = $script:selectedFiles | Where-Object { $_ -ne $file }
+                }
+                for ($i = $fileListBox.SelectedIndices.Count - 1; $i -ge 0; $i--) {
+                    $fileListBox.Items.RemoveAt($fileListBox.SelectedIndices[$i])
+                }
+                
+                if ($script:selectedFiles.Count -eq 0) {
+                    $titleTextBox.Text = ""
+                }
+            }
+        }
         
         # Remove selected file button
         $removeFileButton = New-Object System.Windows.Forms.Button
         $removeFileButton.Text = "Remove Selected"
         $removeFileButton.Location = New-Object System.Drawing.Point(10,170)
         $removeFileButton.Size = New-Object System.Drawing.Size(120,25)
-        $removeFileButton.Add_Click({
-            $selectedIndex = $fileListBox.SelectedIndex
-            if ($selectedIndex -ge 0) {
-                $fileToRemove = $fileListBox.SelectedItem
-                $script:selectedFiles = $script:selectedFiles | Where-Object { $_ -ne $fileToRemove }
-                $fileListBox.Items.RemoveAt($selectedIndex)
-                
-                if ($script:selectedFiles.Count -eq 0) {
-                    $titleTextBox.Text = ""
-                }
-            }
-        })
+        $removeFileButton.Add_Click($removeSelectedFiles)
         $form.Controls.Add($removeFileButton)
 
         # URL label and text box
@@ -693,7 +700,16 @@ if (-not $Files -and -not $Urls) {
         $form.Add_Load({
             & $toggleUrlFields
         })
-
+        
+        # Delete key handler
+        $form.Add_KeyDown({
+            if ($_.KeyCode -eq [System.Windows.Forms.Keys]::Delete -and $fileListBox.Focused) {
+                & $removeSelectedFiles
+                $_.SuppressKeyPress = $true
+            }
+        })
+        
+        $form.KeyPreview = $true
         $form.ShowDialog()
     } catch {
         Write-Host "GUI Error: $_"
