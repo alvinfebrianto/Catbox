@@ -1519,7 +1519,9 @@ if (-not $Files -and -not $Urls) {
                 
                 $totalInputs = $script:selectedFiles.Count + $(if ($urls) { $urls.Count } else { 0 })
                 
-                if ($provider -eq 'imgchest') {
+                if ($provider -eq 'imgchest' -and $postIdTextBox.Text) {
+                    $successfulUploads = $script:selectedFiles.Count
+                } elseif ($provider -eq 'imgchest') {
                     $successfulUploads = ($output | Where-Object { $_ -match "^https://cdn\.imgchest\.com/files/" }).Count
                 } else {
                     $successfulUploads = ($output | Where-Object { $_ -match "^https?://" }).Count
