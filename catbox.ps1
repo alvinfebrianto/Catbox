@@ -89,23 +89,34 @@ function Get-SxcuRateLimitFromFile {
     $rateLimitFile = Join-Path $env:TEMP "catbox_sxcu_rate_limit.json"
     $retryCount = 0
     $maxRetries = 3
-    
+
     while ($retryCount -lt $maxRetries) {
         try {
             if (Test-Path $rateLimitFile) {
-                # Use atomic read operation with locking
                 $lockFile = $rateLimitFile + ".lock"
                 $lockAcquired = $false
+                $maxWaitTime = 10
+                $startTime = [DateTime]::UtcNow
                 try {
                     while ($lockAcquired -eq $false) {
                         if (-not (Test-Path $lockFile)) {
                             New-Item -ItemType File -Path $lockFile -Force | Out-Null
                             $lockAcquired = $true
                         } else {
-                            Start-Sleep -Milliseconds 100
+                            $lockFileAge = ([DateTime]::UtcNow - (Get-Item $lockFile).LastWriteTimeUtc).TotalSeconds
+                            if ($lockFileAge -gt 10) {
+                                Write-Verbose "Removing stale sxcu lock file during read..."
+                                Remove-Item $lockFile -Force
+                            } else {
+                                $elapsed = ([DateTime]::UtcNow - $startTime).TotalSeconds
+                                if ($elapsed -gt $maxWaitTime) {
+                                    throw "Timeout waiting for sxcu rate limit lock during read."
+                                }
+                                Start-Sleep -Milliseconds 100
+                            }
                         }
                     }
-                    
+
                     $content = Get-Content $rateLimitFile -Raw
                     $data = $content | ConvertFrom-Json
                     return $data
@@ -117,7 +128,7 @@ function Get-SxcuRateLimitFromFile {
             }
             break
         } catch {
-            Write-Verbose "Failed to read rate limit file (attempt $($retryCount + 1)): $_"
+            Write-Verbose "Failed to read sxcu rate limit file (attempt $($retryCount + 1)): $_"
             $retryCount++
             if ($retryCount -lt $maxRetries) {
                 Start-Sleep -Milliseconds 200
@@ -135,22 +146,33 @@ function Set-SxcuRateLimitToFile {
     $rateLimitFile = Join-Path $env:TEMP "catbox_sxcu_rate_limit.json"
     $retryCount = 0
     $maxRetries = 3
-    
+
     while ($retryCount -lt $maxRetries) {
         try {
-            # Use atomic write operation with locking
             $lockFile = $rateLimitFile + ".lock"
             $lockAcquired = $false
+            $maxWaitTime = 10
+            $startTime = [DateTime]::UtcNow
             try {
                 while ($lockAcquired -eq $false) {
                     if (-not (Test-Path $lockFile)) {
                         New-Item -ItemType File -Path $lockFile -Force | Out-Null
                         $lockAcquired = $true
                     } else {
-                        Start-Sleep -Milliseconds 100
+                        $lockFileAge = ([DateTime]::UtcNow - (Get-Item $lockFile).LastWriteTimeUtc).TotalSeconds
+                        if ($lockFileAge -gt 10) {
+                            Write-Verbose "Removing stale sxcu lock file during write..."
+                            Remove-Item $lockFile -Force
+                        } else {
+                            $elapsed = ([DateTime]::UtcNow - $startTime).TotalSeconds
+                            if ($elapsed -gt $maxWaitTime) {
+                                throw "Timeout waiting for sxcu rate limit lock during write."
+                            }
+                            Start-Sleep -Milliseconds 100
+                        }
                     }
                 }
-                
+
                 $data = @{
                     'remaining' = $Remaining
                     'reset' = $Reset
@@ -164,38 +186,14 @@ function Set-SxcuRateLimitToFile {
                 }
             }
         } catch {
-            Write-Verbose "Failed to write rate limit file (attempt $($retryCount + 1)): $_"
+            Write-Verbose "Failed to write sxcu rate limit file (attempt $($retryCount + 1)): $_"
             $retryCount++
             if ($retryCount -lt $maxRetries) {
                 Start-Sleep -Milliseconds 200
             }
-            }
         }
     }
-
-    if ($Provider -eq 'imgchest') {
-        if ($Files.Count -eq 0) {
-            Write-Host "No uploads completed. Exiting."
-            $output += "No uploads completed. Exiting."
-            return $output
-        }
-
-        try {
-            Write-Host "Waiting for imgchest upload slot..."
-            $mutex = New-Object System.Threading.Mutex($false, "Global\CatboxImgchestUploadMutex")
-            $hasHandle = $mutex.WaitOne()
-            if (-not $hasHandle) {
-                throw "Could not acquire imgchest upload lock."
-            }
-            Write-Host "Acquired imgchest upload slot."
-        } catch {
-            Write-Host "Error: $($_.Exception.Message)"
-            $output += "Error: $($_.Exception.Message)"
-            if ($mutex) { $mutex.Close(); $mutex = $null }
-            return $output
-        }
-    }
-
+}
 
 function Test-SxcuAllowedFileType {
     param(
@@ -368,13 +366,25 @@ function Get-ImgchestRateLimitFromFile {
             if (Test-Path $rateLimitFile) {
                 $lockFile = $rateLimitFile + ".lock"
                 $lockAcquired = $false
+                $maxWaitTime = 10
+                $startTime = [DateTime]::UtcNow
                 try {
                     while ($lockAcquired -eq $false) {
                         if (-not (Test-Path $lockFile)) {
                             New-Item -ItemType File -Path $lockFile -Force | Out-Null
                             $lockAcquired = $true
                         } else {
-                            Start-Sleep -Milliseconds 100
+                            $lockFileAge = ([DateTime]::UtcNow - (Get-Item $lockFile).LastWriteTimeUtc).TotalSeconds
+                            if ($lockFileAge -gt 10) {
+                                Write-Verbose "Removing stale lock file during read..."
+                                Remove-Item $lockFile -Force
+                            } else {
+                                $elapsed = ([DateTime]::UtcNow - $startTime).TotalSeconds
+                                if ($elapsed -gt $maxWaitTime) {
+                                    throw "Timeout waiting for rate limit lock during read."
+                                }
+                                Start-Sleep -Milliseconds 100
+                            }
                         }
                     }
 
@@ -426,13 +436,25 @@ function Set-ImgchestRateLimitToFile {
         try {
             $lockFile = $rateLimitFile + ".lock"
             $lockAcquired = $false
+            $maxWaitTime = 10
+            $startTime = [DateTime]::UtcNow
             try {
                 while ($lockAcquired -eq $false) {
                     if (-not (Test-Path $lockFile)) {
                         New-Item -ItemType File -Path $lockFile -Force | Out-Null
                         $lockAcquired = $true
                     } else {
-                        Start-Sleep -Milliseconds 100
+                        $lockFileAge = ([DateTime]::UtcNow - (Get-Item $lockFile).LastWriteTimeUtc).TotalSeconds
+                        if ($lockFileAge -gt 10) {
+                            Write-Verbose "Removing stale lock file during write..."
+                            Remove-Item $lockFile -Force
+                        } else {
+                            $elapsed = ([DateTime]::UtcNow - $startTime).TotalSeconds
+                            if ($elapsed -gt $maxWaitTime) {
+                                throw "Timeout waiting for rate limit lock during write."
+                            }
+                            Start-Sleep -Milliseconds 100
+                        }
                     }
                 }
 
@@ -495,6 +517,8 @@ function Wait-ImgchestRateLimit {
     $rateLimitFile = Join-Path $env:TEMP "catbox_imgchest_rate_limit.json"
     $lockFile = $rateLimitFile + ".lock"
     $lockAcquired = $false
+    $maxWaitTime = 30
+    $startTime = [DateTime]::UtcNow
 
     try {
         while ($lockAcquired -eq $false) {
@@ -502,7 +526,17 @@ function Wait-ImgchestRateLimit {
                 New-Item -ItemType File -Path $lockFile -Force | Out-Null
                 $lockAcquired = $true
             } else {
-                Start-Sleep -Milliseconds 50
+                $lockFileAge = ([DateTime]::UtcNow - (Get-Item $lockFile).LastWriteTimeUtc).TotalSeconds
+                if ($lockFileAge -gt 10) {
+                    Write-Host "Removing stale lock file (age: $([Math]::Round($lockFileAge, 1))s)..."
+                    Remove-Item $lockFile -Force
+                } else {
+                    $elapsed = ([DateTime]::UtcNow - $startTime).TotalSeconds
+                    if ($elapsed -gt $maxWaitTime) {
+                        throw "Timeout waiting for rate limit lock after ${maxWaitTime}s. Please manually delete $lockFile if needed."
+                    }
+                    Start-Sleep -Milliseconds 50
+                }
             }
         }
 
@@ -834,6 +868,29 @@ function Invoke-CatboxUpload {
         }
     }
 
+    if ($Provider -eq 'imgchest') {
+        if ($Files.Count -eq 0) {
+            Write-Host "No uploads completed. Exiting."
+            $output += "No uploads completed. Exiting."
+            return $output
+        }
+
+        try {
+            Write-Host "Waiting for imgchest upload slot..."
+            $mutex = New-Object System.Threading.Mutex($false, "Global\CatboxImgchestUploadMutex")
+            $hasHandle = $mutex.WaitOne()
+            if (-not $hasHandle) {
+                throw "Could not acquire imgchest upload lock."
+            }
+            Write-Host "Acquired imgchest upload slot."
+        } catch {
+            Write-Host "Error: $($_.Exception.Message)"
+            $output += "Error: $($_.Exception.Message)"
+            if ($mutex) { $mutex.Close(); $mutex = $null }
+            return $output
+        }
+    }
+
     try {
         if ($Files) {
             foreach ($filePath in $Files) {
@@ -920,12 +977,6 @@ function Invoke-CatboxUpload {
         }
 
         if ($Provider -eq 'imgchest') {
-            if ($Files.Count -eq 0) {
-                Write-Host "No uploads completed. Exiting."
-                $output += "No uploads completed. Exiting."
-                return $output
-            }
-
             $allFiles = $Files
             $anonymous = [bool]$Anonymous
             $script:imgchestUniqueUrls = @{}
