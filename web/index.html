@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Catbox Uploader</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Catbox Uploader</h1>
+            <p>Upload files to catbox.moe, sxcu.net, or imgchest.com</p>
+        </header>
+
+        <form id="uploadForm">
+            <div class="form-group">
+                <label for="provider">Provider</label>
+                <select id="provider" name="provider">
+                    <option value="catbox">catbox.moe</option>
+                    <option value="sxcu">sxcu.net</option>
+                    <option value="imgchest" selected>imgchest.com</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="files">Files</label>
+                <div class="file-upload-area" id="dropZone">
+                    <input type="file" id="files" name="files" multiple accept="image/*,video/webm">
+                    <div class="upload-prompt">
+                        <span class="icon">📁</span>
+                        <p>Drag and drop files here or click to browse</p>
+                        <p class="hint">Supported: PNG, GIF, JPEG, JPG, ICO, BMP, TIFF, WEBM, WEBP</p>
+                    </div>
+                </div>
+                <div id="fileList" class="file-list"></div>
+            </div>
+
+            <div class="form-group" id="urlGroup">
+                <label for="urls">URLs (comma-separated)</label>
+                <input type="text" id="urls" name="urls" placeholder="https://example.com/image.jpg, https://example.com/image2.png">
+                <p class="hint">Only supported for catbox.moe provider</p>
+            </div>
+
+            <div class="form-group">
+                <label for="title">Title</label>
+                <input type="text" id="title" name="title" placeholder="Optional title">
+            </div>
+
+            <div class="form-group">
+                <label for="description">Description</label>
+                <input type="text" id="description" name="description" placeholder="Optional description">
+            </div>
+
+            <div class="form-group checkbox-group" id="createCollectionGroup">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="createCollection" name="createCollection">
+                    <span class="checkmark"></span>
+                    Create collection
+                </label>
+                <p class="hint">Only supported for sxcu.net provider</p>
+            </div>
+
+            <div class="form-group checkbox-group" id="anonymousGroup">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="anonymous" name="anonymous">
+                    <span class="checkmark"></span>
+                    Anonymous
+                </label>
+                <p class="hint">Only supported for imgchest.com provider</p>
+            </div>
+
+            <div class="form-group" id="postIdGroup">
+                <label for="postId">Post ID (to add to existing)</label>
+                <input type="text" id="postId" name="postId" placeholder="e.g., xxxxxxxx">
+                <p class="hint">Only for imgchest.com - add files to existing post</p>
+            </div>
+
+            <button type="submit" id="uploadBtn" class="btn btn-primary">
+                <span class="btn-text">Upload</span>
+                <span class="btn-loading" style="display: none;">Uploading...</span>
+            </button>
+        </form>
+
+        <div id="results" class="results" style="display: none;">
+            <h2>Results</h2>
+            <div id="resultsContent"></div>
+        </div>
+
+        <div id="progress" class="progress" style="display: none;">
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <p id="progressText">Uploading...</p>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
