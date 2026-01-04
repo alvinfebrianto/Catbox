@@ -1,29 +1,32 @@
  param(
-    [Parameter(Mandatory=$false)]
-    [string[]]$Files,
+     [Parameter(Mandatory=$false)]
+     [string[]]$Files,
 
-    [Parameter(Mandatory=$false)]
-    [string[]]$Urls,
+     [Parameter(Mandatory=$false)]
+     [string[]]$Urls,
 
-    [Parameter(Mandatory=$false)]
-    [string]$Title = "",
+     [Parameter(Mandatory=$false)]
+     [string]$Title = "",
 
-    [Parameter(Mandatory=$false)]
-    [string]$Description = "",
+     [Parameter(Mandatory=$false)]
+     [string]$Description = "",
 
-    [Parameter(Mandatory=$false)]
-    [ValidateSet('catbox','sxcu','imgchest')]
-    [string]$Provider = 'catbox',
+     [Parameter(Mandatory=$false)]
+     [ValidateSet('catbox','sxcu','imgchest')]
+     [string]$Provider = 'catbox',
 
-    [Parameter(Mandatory=$false)]
-    [switch]$CreateCollection,
+     [Parameter(Mandatory=$false)]
+     [switch]$CreateCollection,
 
-    [Parameter(Mandatory=$false)]
-    [switch]$VerboseOutput,
+     [Parameter(Mandatory=$false)]
+     [switch]$VerboseOutput,
 
-    [Parameter(Mandatory=$false)]
-    [switch]$Anonymous
-)
+     [Parameter(Mandatory=$false)]
+     [switch]$Anonymous,
+
+     [Parameter(Mandatory=$false)]
+     [string]$PostId = ""
+ )
 
 function Upload-FileToCatbox {
     param(
@@ -792,7 +795,8 @@ function Invoke-CatboxUpload {
         [switch]$CreateCollection,
         [switch]$VerboseOutput,
         [switch]$GuiMode,
-        [switch]$Anonymous
+        [switch]$Anonymous,
+        [string]$PostId
     )
     $output = @()
     $uploadedUrls = @()
@@ -889,6 +893,102 @@ function Invoke-CatboxUpload {
             if ($mutex) { $mutex.Close(); $mutex = $null }
             return $output
         }
+    }
+
+    if ($Provider -eq 'imgchest' -and $PostId) {
+        if ($Anonymous) {
+            Write-Host "Error: Cannot add images to anonymous posts. Anonymous posts do not support adding images after creation."
+            $output += "Error: Cannot add images to anonymous posts. Anonymous posts do not support adding images after creation."
+            if ($mutex) { $mutex.ReleaseMutex(); $mutex.Close(); $mutex = $null }
+            return $output
+        }
+
+        $allFiles = $Files
+        $script:imgchestUniqueUrls = @{}
+
+        $rateLimitChecked = $false
+        $maxRateLimitChecks = 5
+        $checkCount = 0
+
+        while (-not $rateLimitChecked -and $checkCount -lt $maxRateLimitChecks) {
+            $sharedRateLimit = Get-ImgchestRateLimitFromFile
+            if ($sharedRateLimit -ne $null) {
+                $remaining = $sharedRateLimit.remaining
+                $elapsed = $sharedRateLimit.elapsed
+                $windowStart = $sharedRateLimit.windowStart
+                $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+
+                if ($remaining -le 0) {
+                    $waitSeconds = 60 - $elapsed + 1
+                    if ($waitSeconds -le 0) {
+                        Clear-ImgchestRateLimitFile
+                        $rateLimitChecked = $true
+                    } else {
+                        Write-Host "Rate limit exhausted ($remaining/$($sharedRateLimit.limit) in current minute). Waiting ${waitSeconds}s until new minute..."
+                        Start-Sleep -Seconds $waitSeconds
+                        $checkCount++
+                        continue
+                    }
+                } else {
+                    $rateLimitChecked = $true
+                }
+            } elseif ($null -ne $script:imgchestRateLimit -and $script:imgchestRateLimit['checked']) {
+                $remaining = $script:imgchestRateLimit['remaining']
+                $limit = $script:imgchestRateLimit['limit']
+                $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+
+                if ($remaining -le 0) {
+                    Write-Host "Rate limit exhausted (memory: $remaining/$limit). Waiting 60s until new minute..."
+                    Start-Sleep -Seconds 60
+                    $checkCount++
+                    continue
+                } else {
+                    $rateLimitChecked = $true
+                }
+            } else {
+                $rateLimitChecked = $true
+            }
+        }
+
+        if (-not $rateLimitChecked) {
+            Write-Host "Warning: Could not verify rate limit status, proceeding with upload..."
+        }
+
+        try {
+            $totalFiles = $allFiles.Count
+            Write-Host "Adding $totalFiles images to existing imgchest post $PostId..."
+            Write-Host "Post URL: https://imgchest.com/p/$PostId"
+            $output += "Post URL: https://imgchest.com/p/$PostId"
+
+            for ($i = 0; $i -lt $totalFiles; $i += 20) {
+                $batchSize = [Math]::Min(20, $totalFiles - $i)
+                $batchFiles = $allFiles[$i..($i + $batchSize - 1)]
+                $currentUploaded = $i + $batchSize
+
+                Write-Host "Adding images $($i + 1) to $currentUploaded of $totalFiles to post..."
+                $addResp = Add-ImagesToImgchestPost -PostId $PostId -FilePaths $batchFiles
+
+                foreach ($img in $addResp.data.images) {
+                    if (-not $script:imgchestUniqueUrls.ContainsKey($img.link)) {
+                        $script:imgchestUniqueUrls[$img.link] = $true
+                        $output += $img.link
+                        Write-Host $img.link
+                    }
+                }
+            }
+        } catch {
+            Write-Host "Error: $($_.Exception.Message)"
+            $output += "Error: $($_.Exception.Message)"
+        }
+
+        if ($mutex) {
+            Write-Host "Releasing upload slot."
+            $mutex.ReleaseMutex()
+            $mutex.Close()
+            $mutex = $null
+        }
+
+        return $output
     }
 
     try {
@@ -1181,9 +1281,9 @@ if (-not $Files -and -not $Urls) {
         $script:uploadCompleted = $false
         $form = New-Object System.Windows.Forms.Form
         $form.Text = "File Uploader"
-        $form.Size = New-Object System.Drawing.Size(400,630)
+        $form.Size = New-Object System.Drawing.Size(400,680)
         $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::Sizable
-        $form.MinimumSize = New-Object System.Drawing.Size(400,630)
+        $form.MinimumSize = New-Object System.Drawing.Size(400,680)
 
         # Provider selection
         $providerLabel = New-Object System.Windows.Forms.Label
@@ -1243,7 +1343,35 @@ if (-not $Files -and -not $Urls) {
         }
         $providerComboBox.Add_SelectedIndexChanged($toggleAnonymousCheckbox)
         $form.Controls.Add($anonymousCheckbox)
- 
+
+        # Post ID text box
+        $postIdLabel = New-Object System.Windows.Forms.Label
+        $postIdLabel.Text = "Post ID (to add to existing):"
+        $postIdLabel.Location = New-Object System.Drawing.Point(10,405)
+        $postIdLabel.Size = New-Object System.Drawing.Size(200,20)
+        $postIdLabel.Font = New-Object System.Drawing.Font("Microsoft Sans Serif", 8.25)
+        $form.Controls.Add($postIdLabel)
+
+        $postIdTextBox = New-Object System.Windows.Forms.TextBox
+        $postIdTextBox.Location = New-Object System.Drawing.Point(10,425)
+        $postIdTextBox.Size = New-Object System.Drawing.Size(360,20)
+        $postIdTextBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+        $form.Controls.Add($postIdTextBox)
+
+        # Helper to toggle post ID field based on provider
+        $togglePostIdField = {
+            $postIdLabel.Enabled = ($providerComboBox.SelectedItem -eq "imgchest")
+            $postIdTextBox.Enabled = ($providerComboBox.SelectedItem -eq "imgchest")
+            if ($postIdTextBox.Text -and $providerComboBox.SelectedItem -eq "imgchest") {
+                $anonymousCheckbox.Enabled = $false
+                $anonymousCheckbox.Checked = $false
+            } elseif ($providerComboBox.SelectedItem -eq "imgchest") {
+                $anonymousCheckbox.Enabled = $true
+            }
+        }
+        $providerComboBox.Add_SelectedIndexChanged($togglePostIdField)
+        $postIdTextBox.Add_TextChanged($togglePostIdField)
+
         # File button
 
         $fileButton = New-Object System.Windows.Forms.Button
@@ -1254,6 +1382,7 @@ if (-not $Files -and -not $Urls) {
                 $script:selectedFiles = @()
                 $fileListBox.Items.Clear()
                 $titleTextBox.Text = ""
+                $postIdTextBox.Text = ""
                 $script:uploadCompleted = $false
             }
             
@@ -1352,7 +1481,7 @@ if (-not $Files -and -not $Urls) {
         # Upload button
         $uploadButton = New-Object System.Windows.Forms.Button
         $uploadButton.Text = "Upload"
-        $uploadButton.Location = New-Object System.Drawing.Point(10,410)
+        $uploadButton.Location = New-Object System.Drawing.Point(10,455)
         $uploadButton.Add_Click({
             $uploadButton.Enabled = $false
             $uploadButton.Text = "Uploading..."
@@ -1372,15 +1501,19 @@ if (-not $Files -and -not $Urls) {
                         Provider = $provider
                         GuiMode = $true
                     }
-                    
+
                     if ($createCollectionCheckbox.Checked) {
                         $params.CreateCollection = $true
                     }
-                    
+
                     if ($anonymousCheckbox.Checked) {
                         $params.Anonymous = $true
                     }
-                    
+
+                    if ($postIdTextBox.Text -and $provider -eq 'imgchest') {
+                        $params.PostId = $postIdTextBox.Text
+                    }
+
                     $output = Invoke-CatboxUpload @params
                 }
                 
@@ -1418,7 +1551,7 @@ if (-not $Files -and -not $Urls) {
         $outputTextBox = New-Object System.Windows.Forms.TextBox
         $outputTextBox.Multiline = $true
         $outputTextBox.ScrollBars = "Vertical"
-        $outputTextBox.Location = New-Object System.Drawing.Point(10,440)
+        $outputTextBox.Location = New-Object System.Drawing.Point(10,485)
         $outputTextBox.Size = New-Object System.Drawing.Size(360,100)
         $outputTextBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
         $form.Controls.Add($outputTextBox)
@@ -1428,6 +1561,7 @@ if (-not $Files -and -not $Urls) {
             & $toggleUrlFields
             & $toggleCollectionCheckbox
             & $toggleAnonymousCheckbox
+            & $togglePostIdField
         })
         
         # Delete key handler
@@ -1444,6 +1578,6 @@ if (-not $Files -and -not $Urls) {
         Write-Host "GUI Error: $_"
     }
 } else {
-    $output = Invoke-CatboxUpload -Files $Files -Urls $Urls -Title $Title -Description $Description -Provider $Provider -CreateCollection:$CreateCollection -VerboseOutput:$VerboseOutput -Anonymous:$Anonymous
+    $output = Invoke-CatboxUpload -Files $Files -Urls $Urls -Title $Title -Description $Description -Provider $Provider -CreateCollection:$CreateCollection -VerboseOutput:$VerboseOutput -Anonymous:$Anonymous -PostId $PostId
     $output | ForEach-Object { Write-Output $_ }
 }
