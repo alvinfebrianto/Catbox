@@ -134,9 +134,17 @@ async function handleImgchestPost(req) {
   const formData = await req.formData();
 
   const images = formData.getAll("images[]");
+  const isAnonymous = formData.get("anonymous") === "1" || formData.get("anonymous") === "true";
 
   if (images.length === 0) {
     return new Response(JSON.stringify({ error: "No images provided" }), {
+      headers: { "Content-Type": "application/json" },
+      status: 400,
+    });
+  }
+
+  if (isAnonymous && images.length > 20) {
+    return new Response(JSON.stringify({ error: "Anonymous posts are limited to 20 images. Please deselect anonymous mode or upload fewer images." }), {
       headers: { "Content-Type": "application/json" },
       status: 400,
     });
@@ -182,7 +190,9 @@ async function handleImgchestPost(req) {
     });
 
     const text = await response.text();
+    console.log(`Imgchest response [${url}]:`, response.status, text.substring(0, 500));
 
+    // Check if response is HTML (error page)
     if (text.trim().startsWith("<")) {
       return new Response(JSON.stringify({ error: "Imgchest API error", details: "Unauthorized or API error", chunk: i + 1 }), {
         headers: { "Content-Type": "application/json" },
@@ -276,7 +286,9 @@ async function handleImgchestAdd(req) {
     });
 
     const text = await response.text();
+    console.log(`Imgchest response [${url}]:`, response.status, text.substring(0, 500));
 
+    // Check if response is HTML (error page)
     if (text.trim().startsWith("<")) {
       return new Response(JSON.stringify({ error: "Imgchest API error", details: "Unauthorized or API error", chunk: i + 1 }), {
         headers: { "Content-Type": "application/json" },

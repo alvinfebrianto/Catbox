@@ -540,7 +540,11 @@ CatboxUploader.prototype.uploadImgchestPost = function(postId, files, results) {
         try {
             var data = JSON.parse(text);
             if (data.error) {
-                throw new Error(data.error + (data.details ? ': ' + data.details : ''));
+                var errorMsg = data.error;
+                if (data.details) {
+                    errorMsg += ': ' + (typeof data.details === 'object' ? JSON.stringify(data.details) : data.details);
+                }
+                throw new Error(errorMsg);
             }
             results.push({ type: 'success', url: 'https://imgchest.com/p/' + data.data.id, isPost: true });
 
