@@ -3,7 +3,7 @@ import { writeFileSync, unlinkSync, mkdirSync, existsSync, readFileSync } from "
 
 const PORT = 3000;
 const TEMP_DIR = "./temp_uploads";
-const IMGCHEST_TOKEN_FILE = "C:\\Users\\lenovo\\AppData\\Roaming\\catbox_imgchest_token.txt";
+const IMGCHEST_TOKEN_FILE = "C:\\Users\\lenovo\\AppData\\Roaming\\catbox_web_imgchest_token.txt";
 
 if (!existsSync(TEMP_DIR)) {
   mkdirSync(TEMP_DIR, { recursive: true });
@@ -118,6 +118,8 @@ async function handleSxcuFiles(req) {
   });
 }
 
+const MAX_IMGCHEST_IMAGES_PER_REQUEST = 20;
+
 async function handleImgchestPost(req) {
   waitForRateLimit("imgchest", 1);
 
@@ -131,47 +133,96 @@ async function handleImgchestPost(req) {
 
   const formData = await req.formData();
 
-  const response = await fetch("https://api.imgchest.com/v1/post", {
-    method: "POST",
-    body: formData,
-    headers: {
-      "Authorization": "Bearer " + token,
-    },
-  });
+  const images = formData.getAll("images[]");
 
-  const text = await response.text();
-
-  // Check if response is HTML (error page)
-  if (text.trim().startsWith("<")) {
-    return new Response(JSON.stringify({ error: "Imgchest API error", details: "Unauthorized or API error" }), {
+  if (images.length === 0) {
+    return new Response(JSON.stringify({ error: "No images provided" }), {
       headers: { "Content-Type": "application/json" },
-      status: 401,
+      status: 400,
     });
   }
 
-  try {
-    const json = JSON.parse(text);
-    const remaining = response.headers.get("x-ratelimit-remaining");
-    const limit = response.headers.get("x-ratelimit-limit");
+  const otherEntries = [];
+  for (const [key, value] of formData.entries()) {
+    if (key !== "images[]") {
+      otherEntries.push([key, value]);
+    }
+  }
 
-    if (remaining && limit) {
-      setRateLimit("imgchest", {
-        remaining: parseInt(remaining),
-        limit: parseInt(limit),
-        windowStart: Math.floor(Date.now() / 1000),
+  const chunks = [];
+  for (let i = 0; i < images.length; i += MAX_IMGCHEST_IMAGES_PER_REQUEST) {
+    chunks.push(images.slice(i, i + MAX_IMGCHEST_IMAGES_PER_REQUEST));
+  }
+
+  let finalResult = null;
+
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const isFirstChunk = i === 0;
+    const url = isFirstChunk
+      ? "https://api.imgchest.com/v1/post"
+      : `https://api.imgchest.com/v1/post/${finalResult.data.id}/add`;
+
+    waitForRateLimit("imgchest", 1);
+
+    const chunkFormData = new FormData();
+    for (const [key, value] of otherEntries) {
+      chunkFormData.append(key, value);
+    }
+    for (const image of chunk) {
+      chunkFormData.append("images[]", image);
+    }
+
+    const response = await fetch(url, {
+      method: "POST",
+      body: chunkFormData,
+      headers: {
+        "Authorization": "Bearer " + token,
+      },
+    });
+
+    const text = await response.text();
+
+    if (text.trim().startsWith("<")) {
+      return new Response(JSON.stringify({ error: "Imgchest API error", details: "Unauthorized or API error", chunk: i + 1 }), {
+        headers: { "Content-Type": "application/json" },
+        status: 401,
       });
     }
 
-    return new Response(JSON.stringify(json), {
-      headers: { "Content-Type": "application/json" },
-      status: response.ok ? 200 : response.status,
-    });
-  } catch (e) {
-    return new Response(JSON.stringify({ error: "Failed to parse JSON", raw: text.substring(0, 200) }), {
-      headers: { "Content-Type": "application/json" },
-      status: 500,
-    });
+    try {
+      const json = JSON.parse(text);
+      const remaining = response.headers.get("x-ratelimit-remaining");
+      const limit = response.headers.get("x-ratelimit-limit");
+
+      if (remaining && limit) {
+        setRateLimit("imgchest", {
+          remaining: parseInt(remaining),
+          limit: parseInt(limit),
+          windowStart: Math.floor(Date.now() / 1000),
+        });
+      }
+
+      if (!response.ok) {
+        return new Response(JSON.stringify({ error: "Imgchest API error", status: response.status, details: json, raw: text.substring(0, 500), chunk: i + 1 }), {
+          headers: { "Content-Type": "application/json" },
+          status: response.status,
+        });
+      }
+
+      finalResult = json;
+    } catch (e) {
+      return new Response(JSON.stringify({ error: "Failed to parse JSON", raw: text.substring(0, 200), chunk: i + 1 }), {
+        headers: { "Content-Type": "application/json" },
+        status: 500,
+      });
+    }
   }
+
+  return new Response(JSON.stringify(finalResult), {
+    headers: { "Content-Type": "application/json" },
+    status: 200,
+  });
 }
 
 async function handleImgchestAdd(req) {
@@ -190,47 +241,82 @@ async function handleImgchestAdd(req) {
   }
 
   const formData = await req.formData();
-  const response = await fetch(`https://api.imgchest.com/v1/post/${postId}/add`, {
-    method: "POST",
-    body: formData,
-    headers: {
-      "Authorization": "Bearer " + token,
-    },
-  });
 
-  const text = await response.text();
+  const images = formData.getAll("images[]");
 
-  // Check if response is HTML (error page)
-  if (text.trim().startsWith("<")) {
-    return new Response(JSON.stringify({ error: "Imgchest API error", details: "Unauthorized or API error" }), {
+  if (images.length === 0) {
+    return new Response(JSON.stringify({ error: "No images provided" }), {
       headers: { "Content-Type": "application/json" },
-      status: 401,
+      status: 400,
     });
   }
 
-  try {
-    const json = JSON.parse(text);
-    const remaining = response.headers.get("x-ratelimit-remaining");
-    const limit = response.headers.get("x-ratelimit-limit");
+  const chunks = [];
+  for (let i = 0; i < images.length; i += MAX_IMGCHEST_IMAGES_PER_REQUEST) {
+    chunks.push(images.slice(i, i + MAX_IMGCHEST_IMAGES_PER_REQUEST));
+  }
 
-    if (remaining && limit) {
-      setRateLimit("imgchest", {
-        remaining: parseInt(remaining),
-        limit: parseInt(limit),
-        windowStart: Math.floor(Date.now() / 1000),
+  let finalResult = null;
+
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    waitForRateLimit("imgchest", 1);
+
+    const chunkFormData = new FormData();
+    for (const image of chunk) {
+      chunkFormData.append("images[]", image);
+    }
+
+    const response = await fetch(`https://api.imgchest.com/v1/post/${postId}/add`, {
+      method: "POST",
+      body: chunkFormData,
+      headers: {
+        "Authorization": "Bearer " + token,
+      },
+    });
+
+    const text = await response.text();
+
+    if (text.trim().startsWith("<")) {
+      return new Response(JSON.stringify({ error: "Imgchest API error", details: "Unauthorized or API error", chunk: i + 1 }), {
+        headers: { "Content-Type": "application/json" },
+        status: 401,
       });
     }
 
-    return new Response(JSON.stringify(json), {
-      headers: { "Content-Type": "application/json" },
-      status: response.ok ? 200 : response.status,
-    });
-  } catch (e) {
-    return new Response(JSON.stringify({ error: "Failed to parse JSON", raw: text.substring(0, 200) }), {
-      headers: { "Content-Type": "application/json" },
-      status: 500,
-    });
+    try {
+      const json = JSON.parse(text);
+      const remaining = response.headers.get("x-ratelimit-remaining");
+      const limit = response.headers.get("x-ratelimit-limit");
+
+      if (remaining && limit) {
+        setRateLimit("imgchest", {
+          remaining: parseInt(remaining),
+          limit: parseInt(limit),
+          windowStart: Math.floor(Date.now() / 1000),
+        });
+      }
+
+      if (!response.ok) {
+        return new Response(JSON.stringify({ error: "Imgchest API error", status: response.status, details: json, raw: text.substring(0, 500), chunk: i + 1 }), {
+          headers: { "Content-Type": "application/json" },
+          status: response.status,
+        });
+      }
+
+      finalResult = json;
+    } catch (e) {
+      return new Response(JSON.stringify({ error: "Failed to parse JSON", raw: text.substring(0, 200), chunk: i + 1 }), {
+        headers: { "Content-Type": "application/json" },
+        status: 500,
+      });
+    }
   }
+
+  return new Response(JSON.stringify(finalResult), {
+    headers: { "Content-Type": "application/json" },
+    status: 200,
+  });
 }
 
 function waitForRateLimit(provider, cost = 1) {

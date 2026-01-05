@@ -493,7 +493,6 @@ CatboxUploader.prototype.uploadToImgchest = function(results) {
     var anonymous = document.getElementById('anonymous').checked;
     var postId = this.postIdInput.value.trim();
     var title = this.titleInput.value;
-    var maxBatchSize = 20;
 
     if (postId && anonymous) {
         this.showError('Cannot add images to anonymous posts. Anonymous posts do not support adding images after creation.');
@@ -502,143 +501,66 @@ CatboxUploader.prototype.uploadToImgchest = function(results) {
         return;
     }
 
-    // Anonymous posts have a 20 image limit
-    if (anonymous && this.files.length > 20) {
-        this.updateProgress(0, 'Anonymous posts limited to 20 images. Only first 20 will be uploaded...');
+    if (postId) {
+        this.uploadImgchestPost(postId, this.files, results);
+    } else {
+        this.uploadImgchestPost(null, this.files, results);
+    }
+};
+
+CatboxUploader.prototype.uploadImgchestPost = function(postId, files, results) {
+    var self = this;
+    var anonymous = document.getElementById('anonymous').checked;
+    var title = this.titleInput.value;
+
+    this.updateProgress(0, 'Creating post...');
+
+    var formData = new FormData();
+    if (title) formData.append('title', title);
+    formData.append('privacy', 'hidden');
+    formData.append('nsfw', 'true');
+    if (anonymous) formData.append('anonymous', '1');
+
+    for (var i = 0; i < files.length; i++) {
+        formData.append('images[]', files[i]);
     }
 
-    var createPost = function(files, callback) {
-        self.updateProgress(0, 'Creating post...');
+    var url = postId
+        ? '/upload/imgchest/post/' + postId + '/add'
+        : '/upload/imgchest/post';
 
-        var formData = new FormData();
-        if (title) formData.append('title', title);
-        formData.append('privacy', 'hidden');
-        formData.append('nsfw', 'true');
-        if (anonymous) formData.append('anonymous', '1');
-
-        for (var i = 0; i < files.length; i++) {
-            formData.append('images[]', files[i]);
-        }
-
-        fetch('/upload/imgchest/post', {
-            method: 'POST',
-            body: formData
-        })
-        .then(function(response) {
-            return response.text();
-        })
-        .then(function(text) {
-            try {
-                var data = JSON.parse(text);
-                if (data.error) {
-                    throw new Error(data.error + (data.details ? ': ' + data.details : ''));
-                }
-                results.push({ type: 'success', url: 'https://imgchest.com/p/' + data.data.id, isPost: true });
-
-                for (var i = 0; i < data.data.images.length; i++) {
-                    results.push({ type: 'success', url: data.data.images[i].link });
-                }
-
-                callback(data.data.id);
-            } catch (e) {
-                results.push({ type: 'error', message: 'Failed to create post: ' + e.message });
-                self.updateProgress(100, 'Done!');
-                self.displayResults(results);
+    fetch(url, {
+        method: 'POST',
+        body: formData
+    })
+    .then(function(response) {
+        return response.text();
+    })
+    .then(function(text) {
+        try {
+            var data = JSON.parse(text);
+            if (data.error) {
+                throw new Error(data.error + (data.details ? ': ' + data.details : ''));
             }
-        })
-        .catch(function(error) {
-            results.push({ type: 'error', message: 'Failed to create post: ' + error.message });
+            results.push({ type: 'success', url: 'https://imgchest.com/p/' + data.data.id, isPost: true });
+
+            for (var i = 0; i < data.data.images.length; i++) {
+                results.push({ type: 'success', url: data.data.images[i].link });
+            }
+
             self.updateProgress(100, 'Done!');
             self.displayResults(results);
-        });
-    };
-
-    var addToPost = function(pid, files) {
-        var startIdx = addedToPost;
-        var endIdx = Math.min(startIdx + maxBatchSize, files.length);
-        var batch = files.slice(startIdx, endIdx);
-
-        self.updateProgress(((startIdx + batch.length) / files.length) * 100, 'Adding images ' + (startIdx + 1) + ' to ' + (startIdx + batch.length) + ' of ' + files.length + '...');
-
-        var formData = new FormData();
-        for (var i = 0; i < batch.length; i++) {
-            formData.append('images[]', batch[i]);
+        } catch (e) {
+            results.push({ type: 'error', message: 'Failed to upload: ' + e.message });
+            self.updateProgress(100, 'Done!');
+            self.displayResults(results);
         }
-
-        fetch('/upload/imgchest/post/' + pid + '/add', {
-            method: 'POST',
-            body: formData
-        })
-        .then(function(response) {
-            return response.text();
-        })
-        .then(function(text) {
-            try {
-                var data = JSON.parse(text);
-                if (data.error) {
-                    throw new Error(data.error + (data.details ? ': ' + data.details : ''));
-                }
-                for (var i = 0; i < data.data.images.length; i++) {
-                    results.push({ type: 'success', url: data.data.images[i].link });
-                }
-
-                addedToPost += batch.length;
-
-                if (addedToPost >= files.length) {
-                    self.updateProgress(100, 'Done!');
-                    self.displayResults(results);
-                } else {
-                    addToPost(pid, files);
-                }
-            } catch (e) {
-                results.push({ type: 'error', message: 'Failed to add batch: ' + e.message });
-                addedToPost += batch.length;
-
-                if (addedToPost >= files.length) {
-                    self.updateProgress(100, 'Done!');
-                    self.displayResults(results);
-                } else {
-                    addToPost(pid, files);
-                }
-            }
-        })
-        .catch(function(error) {
-            results.push({ type: 'error', message: 'Failed to add batch: ' + error.message });
-            addedToPost += batch.length;
-
-            if (addedToPost >= files.length) {
-                self.updateProgress(100, 'Done!');
-                self.displayResults(results);
-            } else {
-                addToPost(pid, files);
-            }
-        });
-    };
-
-    if (postId) {
-        var addedToPost = 0;
-        addToPost(postId, this.files);
-    } else {
-        var firstBatch = this.files.slice(0, maxBatchSize);
-        var remainingFiles = this.files.slice(maxBatchSize);
-
-        // Anonymous posts cannot add more images after creation
-        if (anonymous && remainingFiles.length > 0) {
-            results.push({ type: 'warning', message: 'Anonymous posts are limited to 20 images. Only the first 20 files were uploaded.' });
-            firstBatch = this.files.slice(0, 20);
-            remainingFiles = [];
-        }
-
-        createPost(firstBatch, function(newPostId) {
-            if (!anonymous && remainingFiles.length > 0) {
-                var addedToPost = 0;
-                addToPost(newPostId, remainingFiles);
-            } else {
-                self.updateProgress(100, 'Done!');
-                self.displayResults(results);
-            }
-        });
-    }
+    })
+    .catch(function(error) {
+        results.push({ type: 'error', message: 'Failed to upload: ' + error.message });
+        self.updateProgress(100, 'Done!');
+        self.displayResults(results);
+    });
 };
 
 CatboxUploader.prototype.updateProgress = function(percent, text) {
