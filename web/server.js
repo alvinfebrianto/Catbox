@@ -190,7 +190,6 @@ async function handleImgchestPost(req) {
     });
 
     const text = await response.text();
-    console.log(`Imgchest response [${url}]:`, response.status, text.substring(0, 500));
 
     // Check if response is HTML (error page)
     if (text.trim().startsWith("<")) {
@@ -286,7 +285,6 @@ async function handleImgchestAdd(req) {
     });
 
     const text = await response.text();
-    console.log(`Imgchest response [${url}]:`, response.status, text.substring(0, 500));
 
     // Check if response is HTML (error page)
     if (text.trim().startsWith("<")) {

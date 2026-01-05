@@ -365,16 +365,16 @@ CatboxUploader.prototype.uploadToCatbox = function(results, urls) {
                 var albumUrl = albumCode.indexOf('http') === 0 ? albumCode : 'https://catbox.moe/album/' + albumCode;
                 results.push({ type: 'success', url: albumUrl, isAlbum: true });
                 self.updateProgress(100, 'Done!');
-                self.displayResults(results);
+                self.displayResults(results, self.files.length);
             })
             .catch(function(error) {
                 results.push({ type: 'error', message: 'Failed to create album: ' + error.message });
                 self.updateProgress(100, 'Done!');
-                self.displayResults(results);
+                self.displayResults(results, self.files.length);
             });
         } else {
             self.updateProgress(100, 'Done!');
-            self.displayResults(results);
+            self.displayResults(results, self.files.length);
         }
     };
 
@@ -440,7 +440,7 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
     var processNext = function() {
         if (completedFiles >= totalFiles) {
             self.updateProgress(100, 'Done!');
-            self.displayResults(results);
+            self.displayResults(results, totalFiles);
             return;
         }
 
@@ -479,7 +479,7 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
         .catch(function(error) {
             results.push({ type: 'error', message: 'Failed to create collection: ' + error.message });
             self.updateProgress(100, 'Done!');
-            self.displayResults(results);
+            self.displayResults(results, totalFiles);
         });
     } else {
         var totalFiles = this.files.length;
@@ -501,19 +501,21 @@ CatboxUploader.prototype.uploadToImgchest = function(results) {
         return;
     }
 
+    var totalFiles = this.files.length;
+
     if (postId) {
-        this.uploadImgchestPost(postId, this.files, results);
+        this.uploadImgchestPost(postId, this.files, results, totalFiles);
     } else {
-        this.uploadImgchestPost(null, this.files, results);
+        this.uploadImgchestPost(null, this.files, results, totalFiles);
     }
 };
 
-CatboxUploader.prototype.uploadImgchestPost = function(postId, files, results) {
+CatboxUploader.prototype.uploadImgchestPost = function(postId, files, results, totalFiles) {
     var self = this;
     var anonymous = document.getElementById('anonymous').checked;
     var title = this.titleInput.value;
 
-    this.updateProgress(0, 'Creating post...');
+    this.updateProgress(0, postId ? 'Adding images...' : 'Creating post...');
 
     var formData = new FormData();
     if (title) formData.append('title', title);
@@ -546,24 +548,33 @@ CatboxUploader.prototype.uploadImgchestPost = function(postId, files, results) {
                 }
                 throw new Error(errorMsg);
             }
+
             results.push({ type: 'success', url: 'https://imgchest.com/p/' + data.data.id, isPost: true });
 
-            for (var i = 0; i < data.data.images.length; i++) {
-                results.push({ type: 'success', url: data.data.images[i].link });
+            var newImages;
+            if (postId) {
+                var existingCount = data.data.image_count - files.length;
+                newImages = data.data.images.slice(existingCount);
+            } else {
+                newImages = data.data.images;
+            }
+
+            for (var i = 0; i < newImages.length; i++) {
+                results.push({ type: 'success', url: newImages[i].link });
             }
 
             self.updateProgress(100, 'Done!');
-            self.displayResults(results);
+            self.displayResults(results, totalFiles);
         } catch (e) {
             results.push({ type: 'error', message: 'Failed to upload: ' + e.message });
             self.updateProgress(100, 'Done!');
-            self.displayResults(results);
+            self.displayResults(results, totalFiles);
         }
     })
     .catch(function(error) {
         results.push({ type: 'error', message: 'Failed to upload: ' + error.message });
         self.updateProgress(100, 'Done!');
-        self.displayResults(results);
+        self.displayResults(results, totalFiles);
     });
 };
 
@@ -578,11 +589,10 @@ CatboxUploader.prototype.setLoading = function(loading) {
     this.uploadBtn.querySelector('.btn-loading').style.display = loading ? 'inline' : 'none';
 };
 
-CatboxUploader.prototype.displayResults = function(results) {
+CatboxUploader.prototype.displayResults = function(results, totalFiles) {
     this.resultsDiv.style.display = 'block';
     this.resultsContent.innerHTML = '';
 
-    // Count only actual file uploads (not post/album/collection URLs)
     var imageUploads = results.filter(function(r) { 
         return r.type === 'success' && !r.isPost && !r.isAlbum && !r.isCollection; 
     }).length;
@@ -593,10 +603,10 @@ CatboxUploader.prototype.displayResults = function(results) {
         this.uploadCompleted = true;
     }
 
-    var totalFiles = this.files.length;
-    var skipped = warnings > 0 ? totalFiles - imageUploads : 0;
+    var filesCount = totalFiles !== undefined ? totalFiles : this.files.length;
+    var skipped = warnings > 0 ? filesCount - imageUploads : 0;
 
-    var summaryText = 'Successfully uploaded ' + imageUploads + ' out of ' + totalFiles + ' files.';
+    var summaryText = 'Successfully uploaded ' + imageUploads + ' out of ' + filesCount + ' files.';
     if (failed > 0) {
         summaryText += ' ' + failed + ' failed.';
     }
