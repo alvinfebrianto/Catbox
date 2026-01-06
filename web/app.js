@@ -365,16 +365,16 @@ CatboxUploader.prototype.uploadToCatbox = function(results, urls) {
                 var albumUrl = albumCode.indexOf('http') === 0 ? albumCode : 'https://catbox.moe/album/' + albumCode;
                 results.push({ type: 'success', url: albumUrl, isAlbum: true });
                 self.updateProgress(100, 'Done!');
-                self.displayResults(results, self.files.length);
+                self.displayResults(results, totalItems);
             })
             .catch(function(error) {
                 results.push({ type: 'error', message: 'Failed to create album: ' + error.message });
                 self.updateProgress(100, 'Done!');
-                self.displayResults(results, self.files.length);
+                self.displayResults(results, totalItems);
             });
         } else {
             self.updateProgress(100, 'Done!');
-            self.displayResults(results, self.files.length);
+            self.displayResults(results, totalItems);
         }
     };
 
