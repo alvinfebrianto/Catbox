@@ -89,6 +89,7 @@ async function handleSxcuCollections(req) {
     headers: { "User-Agent": "sxcuUploader/1.0" },
   });
   const json = await response.json();
+  console.log("SXCU Collection Create Response:", JSON.stringify(json, null, 2));
   return new Response(JSON.stringify(json), {
     headers: { "Content-Type": "application/json" },
     status: response.ok ? 200 : response.status,
@@ -97,6 +98,17 @@ async function handleSxcuCollections(req) {
 
 async function handleSxcuFiles(req) {
   const formData = await req.formData();
+  
+  // Log form data for debugging
+  console.log("SXCU File Upload Request Data:");
+  for (const [key, value] of formData.entries()) {
+    if (key === 'file') {
+      console.log(`  ${key}: [File: ${value.name}, size: ${value.size}]`);
+    } else {
+      console.log(`  ${key}: ${value}`);
+    }
+  }
+
   const response = await fetch("https://sxcu.net/api/files/create", {
     method: "POST",
     body: formData,
@@ -104,12 +116,14 @@ async function handleSxcuFiles(req) {
   });
 
   const text = await response.text();
+  console.log("SXCU File Upload Response:", text);
+  
   let json = {};
 
   try {
     json = JSON.parse(text);
   } catch {
-    // Not JSON
+    json = { error: text };
   }
 
   return new Response(JSON.stringify(json), {

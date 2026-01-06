@@ -412,12 +412,14 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
 
         var formData = new FormData();
         formData.append('file', file);
-        formData.append('noembed', '');
+        formData.append('noembed', 'true');
 
-        if (collectionToken) {
-            formData.append('collection', collectionToken);
-        } else if (collectionId) {
+        if (collectionId) {
             formData.append('collection', collectionId);
+        }
+        
+        if (collectionToken) {
+            formData.append('collection_token', collectionToken);
         }
 
         fetch('/upload/sxcu/files', {
@@ -428,10 +430,14 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
             }
         })
         .then(function(response) {
-            if (!response.ok) {
-                throw new Error('Upload failed: ' + response.statusText);
-            }
-            return response.json();
+            return response.json().then(function(data) {
+                if (!response.ok) {
+                    var msg = data.message || (data.error && data.error.message) || data.error || response.statusText;
+                    if (typeof msg === 'object') msg = JSON.stringify(msg);
+                    throw new Error('Upload failed: ' + msg);
+                }
+                return data;
+            });
         })
         .then(function(data) {
             results.push({ type: 'success', url: data.url });
@@ -461,8 +467,8 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
         var formData = new FormData();
         formData.append('title', title || 'Untitled');
         formData.append('desc', description);
-        formData.append('private', 'false');
-        formData.append('unlisted', 'false');
+        formData.append('private', 'true');
+        formData.append('unlisted', 'true');
 
         fetch('/upload/sxcu/collections', {
             method: 'POST',
@@ -478,8 +484,14 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
             return response.json();
         })
         .then(function(data) {
-            collectionId = data.collection_id;
-            collectionToken = data.collection_token;
+            console.log('Collection created:', data);
+            collectionId = data.collection_id || data.id;
+            collectionToken = data.collection_token || data.token;
+
+            if (!collectionId && !collectionToken) {
+                throw new Error('Invalid collection response. Keys: ' + Object.keys(data).join(', '));
+            }
+
             results.push({ type: 'success', url: 'https://sxcu.net/c/' + collectionId, isCollection: true });
             processNext();
         })
