@@ -1,6 +1,6 @@
 function CatboxUploader() {
     this.files = [];
-    this.provider = 'imgchest';
+    this.provider = localStorage.getItem('catbox_provider') || 'imgchest';
     this.uploadCompleted = false;
     this.init();
 }
@@ -25,6 +25,8 @@ CatboxUploader.prototype.init = function() {
     this.titleInput = document.getElementById('title');
     this.postIdInput = document.getElementById('postId');
 
+    this.providerSelect.value = this.provider;
+
     this.bindEvents();
     this.updateUI();
 };
@@ -38,6 +40,7 @@ CatboxUploader.prototype.bindEvents = function() {
 
     this.providerSelect.addEventListener('change', function() {
         self.provider = self.providerSelect.value;
+        localStorage.setItem('catbox_provider', self.provider);
         self.updateUI();
     });
 
