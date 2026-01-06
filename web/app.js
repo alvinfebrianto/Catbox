@@ -403,6 +403,9 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
     var title = this.titleInput.value;
     var description = document.getElementById('description').value;
     var collectionId = '';
+    var collectionToken = '';
+    var totalFiles = this.files.length;
+    var completedFiles = 0;
 
     var uploadFile = function(file, callback) {
         self.updateProgress((completedFiles / totalFiles) * 100, 'Uploading ' + file.name + '...');
@@ -411,7 +414,9 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
         formData.append('file', file);
         formData.append('noembed', '');
 
-        if (collectionId) {
+        if (collectionToken) {
+            formData.append('collection', collectionToken);
+        } else if (collectionId) {
             formData.append('collection', collectionId);
         }
 
@@ -474,9 +479,8 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
         })
         .then(function(data) {
             collectionId = data.collection_id;
+            collectionToken = data.collection_token;
             results.push({ type: 'success', url: 'https://sxcu.net/c/' + collectionId, isCollection: true });
-            totalFiles = self.files.length;
-            var completedFiles = 0;
             processNext();
         })
         .catch(function(error) {
@@ -485,8 +489,6 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
             self.displayResults(results, totalFiles);
         });
     } else {
-        var totalFiles = this.files.length;
-        var completedFiles = 0;
         processNext();
     }
 };
