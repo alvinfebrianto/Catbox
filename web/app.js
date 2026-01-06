@@ -417,7 +417,6 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
     var self = this;
     var createCollection = document.getElementById('createCollection').checked;
     var isPrivate = document.getElementById('sxcuPrivate').checked;
-    var isUnlisted = document.getElementById('sxcuUnlisted').checked;
     var title = this.titleInput.value;
     var description = document.getElementById('description').value;
     var collectionId = '';
@@ -486,7 +485,6 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
         formData.append('title', title || 'Untitled');
         formData.append('desc', description);
         formData.append('private', isPrivate ? 'true' : 'false');
-        formData.append('unlisted', isUnlisted ? 'true' : 'false');
 
         fetch('/upload/sxcu/collections', {
             method: 'POST',
