@@ -104,7 +104,7 @@ async function handleSxcuFiles(req) {
   });
 
   const text = await response.text();
-  let json = null;
+  let json = {};
 
   try {
     json = JSON.parse(text);
@@ -112,7 +112,7 @@ async function handleSxcuFiles(req) {
     // Not JSON
   }
 
-  return new Response(JSON.stringify({ json }), {
+  return new Response(JSON.stringify(json), {
     headers: { "Content-Type": "application/json" },
     status: response.ok ? 200 : response.status,
   });
