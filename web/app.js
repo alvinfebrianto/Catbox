@@ -13,6 +13,7 @@ CatboxUploader.prototype.init = function() {
     this.fileList = document.getElementById('fileList');
     this.urlGroup = document.getElementById('urlGroup');
     this.createCollectionGroup = document.getElementById('createCollectionGroup');
+    this.sxcuOptions = document.getElementById('sxcuOptions');
     this.anonymousGroup = document.getElementById('anonymousGroup');
     this.postIdGroup = document.getElementById('postIdGroup');
     this.uploadBtn = document.getElementById('uploadBtn');
@@ -61,6 +62,15 @@ CatboxUploader.prototype.bindEvents = function() {
                 if (existingWarning) {
                     existingWarning.remove();
                 }
+            }
+        });
+    }
+
+    var createCollectionCheckbox = document.getElementById('createCollection');
+    if (createCollectionCheckbox) {
+        createCollectionCheckbox.addEventListener('change', function() {
+            if (self.sxcuOptions) {
+                self.sxcuOptions.classList.toggle('hidden', !this.checked);
             }
         });
     }
@@ -137,6 +147,12 @@ CatboxUploader.prototype.updateUI = function() {
 
     this.urlGroup.classList.toggle('hidden', isSxcu || isImgchest);
     this.createCollectionGroup.classList.toggle('hidden', !isSxcu);
+    
+    if (this.sxcuOptions) {
+        var createCollectionChecked = document.getElementById('createCollection').checked;
+        this.sxcuOptions.classList.toggle('hidden', !isSxcu || !createCollectionChecked);
+    }
+
     this.anonymousGroup.classList.toggle('hidden', !isImgchest);
     this.postIdGroup.classList.toggle('hidden', !isImgchest);
 
@@ -400,6 +416,8 @@ CatboxUploader.prototype.uploadToCatbox = function(results, urls) {
 CatboxUploader.prototype.uploadToSxcu = function(results) {
     var self = this;
     var createCollection = document.getElementById('createCollection').checked;
+    var isPrivate = document.getElementById('sxcuPrivate').checked;
+    var isUnlisted = document.getElementById('sxcuUnlisted').checked;
     var title = this.titleInput.value;
     var description = document.getElementById('description').value;
     var collectionId = '';
@@ -467,8 +485,8 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
         var formData = new FormData();
         formData.append('title', title || 'Untitled');
         formData.append('desc', description);
-        formData.append('private', 'true');
-        formData.append('unlisted', 'true');
+        formData.append('private', isPrivate ? 'true' : 'false');
+        formData.append('unlisted', isUnlisted ? 'true' : 'false');
 
         fetch('/upload/sxcu/collections', {
             method: 'POST',
