@@ -517,20 +517,27 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
         }
 
         var indicesToUpload = filesToUpload.slice(0, burstSize);
-        var uploadedCount = 0;
         var rateLimited = false;
-        var filesUploaded = [];
-        var filesRateLimited = [];
+        var uploadedCount = 0;
 
         var uploadNext = function(idx) {
             if (idx >= indicesToUpload.length) {
-                filesToUpload = filesToUpload.slice(burstSize);
                 if (rateLimited) {
+                    var successfulInBurst = uploadedCount;
+                    if (successfulInBurst > 0) {
+                        filesToUpload = filesToUpload.slice(successfulInBurst);
+                    }
                     var waitSeconds = Math.ceil(rateLimitState.resetAfter) + 1;
                     self.updateProgress((completedFiles / totalFiles) * 100, 'Rate limited. Waiting ' + waitSeconds + 's...');
                     setTimeout(processNextBurst, waitSeconds * 1000);
                 } else {
-                    setTimeout(processNextBurst, 200);
+                    filesToUpload = filesToUpload.slice(burstSize);
+                    if (filesToUpload.length > 0) {
+                        setTimeout(processNextBurst, 200);
+                    } else {
+                        self.updateProgress(100, 'Done!');
+                        self.displayResults(results, totalFiles);
+                    }
                 }
                 return;
             }
