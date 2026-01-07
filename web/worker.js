@@ -58,8 +58,13 @@ async function handleSxcuCollections(request) {
     headers: { "User-Agent": "sxcuUploader/1.0" },
   });
   const json = await response.json();
+  const responseHeaders = new Headers({ ...CORS_HEADERS, "Content-Type": "application/json" });
+  const rateLimitHeaders = ["X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset", "X-RateLimit-Reset-After", "X-RateLimit-Bucket", "X-RateLimit-Global"];
+  rateLimitHeaders.forEach(h => {
+    if (response.headers.get(h)) responseHeaders.set(h, response.headers.get(h));
+  });
   return new Response(JSON.stringify(json), {
-    headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+    headers: responseHeaders,
     status: response.ok ? 200 : response.status,
   });
 }
@@ -74,8 +79,13 @@ async function handleSxcuFiles(request) {
   const text = await response.text();
   let json = {};
   try { json = JSON.parse(text); } catch { json = { error: text }; }
+  const responseHeaders = new Headers({ ...CORS_HEADERS, "Content-Type": "application/json" });
+  const rateLimitHeaders = ["X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset", "X-RateLimit-Reset-After", "X-RateLimit-Bucket", "X-RateLimit-Global"];
+  rateLimitHeaders.forEach(h => {
+    if (response.headers.get(h)) responseHeaders.set(h, response.headers.get(h));
+  });
   return new Response(JSON.stringify(json), {
-    headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+    headers: responseHeaders,
     status: response.ok ? 200 : response.status,
   });
 }
