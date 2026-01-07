@@ -1,8 +1,19 @@
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  "Access-Control-Max-Age": "86400",
+};
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method;
+
+    if (method === "OPTIONS") {
+      return new Response(null, { headers: CORS_HEADERS, status: 204 });
+    }
 
     if (method === "POST" && path === "/upload/catbox") {
       return handleCatboxUpload(request);
@@ -33,7 +44,10 @@ async function handleCatboxUpload(request) {
     body: formData,
   });
   const text = await response.text();
-  return new Response(text, { status: response.ok ? 200 : response.status });
+  return new Response(text, {
+    headers: CORS_HEADERS,
+    status: response.ok ? 200 : response.status
+  });
 }
 
 async function handleSxcuCollections(request) {
@@ -45,7 +59,7 @@ async function handleSxcuCollections(request) {
   });
   const json = await response.json();
   return new Response(JSON.stringify(json), {
-    headers: { "Content-Type": "application/json" },
+    headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
     status: response.ok ? 200 : response.status,
   });
 }
@@ -61,7 +75,7 @@ async function handleSxcuFiles(request) {
   let json = {};
   try { json = JSON.parse(text); } catch { json = { error: text }; }
   return new Response(JSON.stringify(json), {
-    headers: { "Content-Type": "application/json" },
+    headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
     status: response.ok ? 200 : response.status,
   });
 }
@@ -70,7 +84,7 @@ async function handleImgchestPost(request, env) {
   const token = env.IMGCHEST_API_TOKEN;
   if (!token) {
     return new Response(JSON.stringify({ error: "Imgchest API token not configured" }), {
-      headers: { "Content-Type": "application/json" },
+      headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
       status: 401,
     });
   }
@@ -107,14 +121,14 @@ async function handleImgchestPost(request, env) {
       finalResult = JSON.parse(text);
     } catch {
       return new Response(JSON.stringify({ error: "Failed to parse JSON", raw: text.substring(0, 200) }), {
-        headers: { "Content-Type": "application/json" },
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
         status: 500,
       });
     }
   }
 
   return new Response(JSON.stringify(finalResult), {
-    headers: { "Content-Type": "application/json" },
+    headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
     status: 200,
   });
 }
@@ -127,7 +141,7 @@ async function handleImgchestAdd(request, env) {
 
   if (!token) {
     return new Response(JSON.stringify({ error: "Imgchest API token not configured" }), {
-      headers: { "Content-Type": "application/json" },
+      headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
       status: 401,
     });
   }
@@ -154,14 +168,14 @@ async function handleImgchestAdd(request, env) {
       finalResult = JSON.parse(text);
     } catch {
       return new Response(JSON.stringify({ error: "Failed to parse JSON", raw: text.substring(0, 200) }), {
-        headers: { "Content-Type": "application/json" },
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
         status: 500,
       });
     }
   }
 
   return new Response(JSON.stringify(finalResult), {
-    headers: { "Content-Type": "application/json" },
+    headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
     status: 200,
   });
 }
