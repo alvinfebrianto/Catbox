@@ -473,6 +473,11 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
             rateLimitState.resetAfter = newRateLimit.resetAfter;
             if (newRateLimit.bucket) rateLimitState.bucket = newRateLimit.bucket;
 
+            if (response.status === 429) {
+                var errorMsg = 'Rate limit exceeded';
+                throw new Error(errorMsg);
+            }
+
             return response.json().then(function(data) {
                 if (!response.ok) {
                     var msg = data.message || (data.error && data.error.message) || data.error || response.statusText;
@@ -488,8 +493,6 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
             callback(null, data);
         })
         .catch(function(error) {
-            results.push({ type: 'error', message: 'Failed to upload ' + file.name + ': ' + error.message });
-            completedFiles++;
             callback(error);
         });
     };
@@ -497,22 +500,25 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
     var uploadBurst = function(startIndex, count, callback) {
         var uploadedInBurst = 0;
         var errorsInBurst = 0;
+        var rateLimitedFiles = [];
         var hasRateLimited = false;
 
         var uploadNextInBurst = function(index) {
             if (index >= count || hasRateLimited) {
-                callback(uploadedInBurst, errorsInBurst, rateLimitState.remaining <= 0 || hasRateLimited);
+                callback(uploadedInBurst, errorsInBurst, rateLimitedFiles, hasRateLimited);
                 return;
             }
 
             var file = self.files[startIndex + index];
-            uploadFile(file, function(err) {
-                uploadedInBurst++;
+            uploadFile(file, function(err, data) {
                 if (err) {
                     errorsInBurst++;
-                    if (err.message.indexOf('Rate limit') !== -1 || err.message.indexOf('429') !== -1) {
+                    if (err.message.indexOf('Rate limit') !== -1 || err.message.indexOf('429') !== -1 || err.message.indexOf('Too Many Requests') !== -1) {
                         hasRateLimited = true;
+                        rateLimitedFiles.push(file);
                     }
+                } else {
+                    uploadedInBurst++;
                 }
                 uploadNextInBurst(index + 1);
             });
@@ -537,10 +543,10 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
 
         self.updateProgress((completedFiles / totalFiles) * 100, 'Uploading ' + (completedFiles + 1) + '-' + (completedFiles + burstSize) + ' of ' + totalFiles + '...');
 
-        uploadBurst(completedFiles, burstSize, function(uploaded, errors, rateLimited) {
+        uploadBurst(completedFiles, burstSize, function(uploaded, errors, rateLimitedFiles, rateLimited) {
             completedFiles += uploaded;
 
-            if (rateLimited) {
+            if (rateLimitedFiles.length > 0) {
                 var waitSeconds = Math.ceil(rateLimitState.resetAfter) + 1;
                 self.updateProgress((completedFiles / totalFiles) * 100, 'Rate limited. Waiting ' + waitSeconds + 's...');
                 setTimeout(processNextBurst, waitSeconds * 1000);
