@@ -729,6 +729,12 @@ CatboxUploader.prototype.addIncrementalResult = function(result) {
     item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 };
 
+CatboxUploader.prototype.setLoading = function(loading) {
+    this.uploadBtn.disabled = loading;
+    this.uploadBtn.querySelector('.btn-text').style.display = loading ? 'none' : 'inline';
+    this.uploadBtn.querySelector('.btn-loading').style.display = loading ? 'inline' : 'none';
+};
+
 CatboxUploader.prototype.displayResults = function(results, totalFiles) {
     this.resultsDiv.style.display = 'block';
     this.resultsContent.innerHTML = '';
