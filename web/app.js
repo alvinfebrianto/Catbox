@@ -484,19 +484,19 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
             if (newRateLimit.reset > 0) rateLimitState.reset = newRateLimit.reset;
             if (newRateLimit.bucket) rateLimitState.bucket = newRateLimit.bucket;
 
-            if (response.status === 429) {
-                throw new Error('Rate limit exceeded');
-            }
-
             return response.json().then(function(data) {
-                if (!response.ok) {
-                    var msg = data.message || (data.error && data.error.message) || data.error || response.statusText;
-                    if (typeof msg === 'object') msg = JSON.stringify(msg);
+                if (response.status === 429) {
                     if (data.rateLimitReset) {
                         rateLimitState.reset = parseInt(data.rateLimitReset);
                     } else if (data.rateLimitResetAfter) {
                         rateLimitState.reset = Math.floor(Date.now() / 1000) + parseFloat(data.rateLimitResetAfter);
                     }
+                    throw new Error('Rate limit exceeded');
+                }
+
+                if (!response.ok) {
+                    var msg = data.message || (data.error && data.error.message) || data.error || response.statusText;
+                    if (typeof msg === 'object') msg = JSON.stringify(msg);
                     throw new Error('Upload failed: ' + msg);
                 }
                 return data;
