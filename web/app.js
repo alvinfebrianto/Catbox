@@ -434,7 +434,7 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
     var rateLimitState = {
         limit: 5,
         remaining: 5,
-        resetAfter: 60,
+        reset: 0,
         bucket: null
     };
 
@@ -442,9 +442,16 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
         return {
             limit: parseInt(headers.get('X-RateLimit-Limit')) || 5,
             remaining: parseInt(headers.get('X-RateLimit-Remaining')) || 0,
-            resetAfter: parseFloat(headers.get('X-RateLimit-Reset-After')) || 60,
+            reset: parseInt(headers.get('X-RateLimit-Reset')) || 0,
             bucket: headers.get('X-RateLimit-Bucket') || null
         };
+    };
+
+    var getWaitSeconds = function() {
+        if (rateLimitState.reset <= 0) return 60;
+        var now = Math.floor(Date.now() / 1000);
+        var wait = rateLimitState.reset - now + 1;
+        return wait > 0 ? wait : 1;
     };
 
     var uploadFile = function(fileIndex, callback) {
@@ -474,7 +481,7 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
             var newRateLimit = parseRateLimitHeaders(response.headers);
             rateLimitState.limit = newRateLimit.limit;
             rateLimitState.remaining = newRateLimit.remaining;
-            rateLimitState.resetAfter = newRateLimit.resetAfter;
+            if (newRateLimit.reset > 0) rateLimitState.reset = newRateLimit.reset;
             if (newRateLimit.bucket) rateLimitState.bucket = newRateLimit.bucket;
 
             if (response.status === 429) {
@@ -485,8 +492,10 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
                 if (!response.ok) {
                     var msg = data.message || (data.error && data.error.message) || data.error || response.statusText;
                     if (typeof msg === 'object') msg = JSON.stringify(msg);
-                    if (data.rateLimitResetAfter) {
-                        rateLimitState.resetAfter = parseFloat(data.rateLimitResetAfter) || 60;
+                    if (data.rateLimitReset) {
+                        rateLimitState.reset = parseInt(data.rateLimitReset);
+                    } else if (data.rateLimitResetAfter) {
+                        rateLimitState.reset = Math.floor(Date.now() / 1000) + parseFloat(data.rateLimitResetAfter);
                     }
                     throw new Error('Upload failed: ' + msg);
                 }
@@ -528,7 +537,7 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
                     if (successfulInBurst > 0) {
                         filesToUpload = filesToUpload.slice(successfulInBurst);
                     }
-                    var waitSeconds = Math.ceil(rateLimitState.resetAfter) + 1;
+                    var waitSeconds = getWaitSeconds();
                     self.updateProgress((completedFiles / totalFiles) * 100, 'Rate limited. Waiting ' + waitSeconds + 's...');
                     setTimeout(processNextBurst, waitSeconds * 1000);
                 } else {
@@ -559,9 +568,10 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
                     self.updateProgress(((completedFiles + uploadedCount + (indicesToUpload.length - idx - 1)) / totalFiles) * 100, 'Uploaded: ' + lastResult.url);
                 } else if (err && (err.message.indexOf('Rate limit') !== -1 || err.message.indexOf('429') !== -1 || err.message.indexOf('Too Many Requests') !== -1)) {
                     rateLimited = true;
+                    var waitSeconds = getWaitSeconds();
                     var rateLimitNotice = document.createElement('div');
                     rateLimitNotice.className = 'result-item warning';
-                    rateLimitNotice.textContent = 'Rate limited! Waiting ' + Math.ceil(rateLimitState.resetAfter) + 's before next upload...';
+                    rateLimitNotice.textContent = 'Rate limited! Waiting ' + waitSeconds + 's before next upload...';
                     rateLimitNotice.id = 'rate-limit-notice';
                     var existingNotice = self.resultsContent.querySelector('#rate-limit-notice');
                     if (existingNotice) existingNotice.remove();
@@ -598,7 +608,6 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
             return response.json();
         })
         .then(function(data) {
-            console.log('Collection created:', data);
             collectionId = data.collection_id || data.id;
             collectionToken = data.collection_token || data.token;
 

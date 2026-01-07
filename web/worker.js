@@ -89,7 +89,8 @@ async function handleSxcuFiles(request) {
 
   if (response.status === 429) {
     json.rateLimitExceeded = true;
-    json.rateLimitResetAfter = rateLimitHeaders.get("X-RateLimit-Reset-After") || 60;
+    json.rateLimitReset = parseInt(rateLimitHeaders.get("X-RateLimit-Reset")) || Math.floor(Date.now() / 1000) + 60;
+    json.rateLimitResetAfter = parseFloat(rateLimitHeaders.get("X-RateLimit-Reset-After")) || 60;
   }
 
   const responseHeaders = new Headers({ ...CORS_HEADERS, "Content-Type": "application/json" });
