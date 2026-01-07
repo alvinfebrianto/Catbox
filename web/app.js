@@ -473,6 +473,8 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
         });
     };
 
+    var delayBetweenUploads = 1500;
+
     var processNext = function() {
         if (completedFiles >= totalFiles) {
             self.updateProgress(100, 'Done!');
@@ -480,7 +482,16 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
             return;
         }
 
-        uploadFile(self.files[completedFiles], processNext);
+        uploadFile(self.files[completedFiles], function() {
+            completedFiles++;
+            if (completedFiles < totalFiles) {
+                self.updateProgress((completedFiles / totalFiles) * 100, 'Waiting for rate limit...');
+                setTimeout(processNext, delayBetweenUploads);
+            } else {
+                self.updateProgress(100, 'Done!');
+                self.displayResults(results, totalFiles);
+            }
+        });
     };
 
     if (createCollection) {
