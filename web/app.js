@@ -258,7 +258,8 @@ CatboxUploader.prototype.handleSubmit = function(e) {
     }
 
     this.setLoading(true);
-    this.resultsDiv.style.display = 'none';
+    this.resultsDiv.style.display = 'block';
+    this.resultsContent.innerHTML = '<div class="summary warning">Uploading...</div>';
     this.progressDiv.style.display = 'block';
     this.progressFill.style.width = '0%';
 
@@ -543,9 +544,17 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
             }
 
             var fileIndex = indicesToUpload[idx];
+            var file = self.files[fileIndex];
+            self.updateProgress(((completedFiles + idx) / totalFiles) * 100, 'Uploading ' + file.name + '...');
+
             uploadFile(fileIndex, function(err, success) {
                 if (success) {
                     uploadedCount++;
+                    var lastResult = results[results.length - 1];
+                    if (lastResult && lastResult.type === 'success') {
+                        self.addIncrementalResult(lastResult);
+                    }
+                    self.updateProgress(((completedFiles + uploadedCount + (indicesToUpload.length - idx - 1)) / totalFiles) * 100, 'Uploaded: ' + lastResult.url);
                 } else if (err && (err.message.indexOf('Rate limit') !== -1 || err.message.indexOf('429') !== -1 || err.message.indexOf('Too Many Requests') !== -1)) {
                     rateLimited = true;
                 }
@@ -587,7 +596,10 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
                 throw new Error('Invalid collection response. Keys: ' + Object.keys(data).join(', '));
             }
 
-            results.push({ type: 'success', url: 'https://sxcu.net/c/' + collectionId, isCollection: true });
+            var collectionResult = { type: 'success', url: 'https://sxcu.net/c/' + collectionId, isCollection: true };
+            results.push(collectionResult);
+            self.addIncrementalResult(collectionResult);
+            self.updateProgress(0, 'Collection created. Starting uploads...');
             processNextBurst();
         })
         .catch(function(error) {
@@ -696,10 +708,25 @@ CatboxUploader.prototype.updateProgress = function(percent, text) {
     this.progressText.textContent = text;
 };
 
-CatboxUploader.prototype.setLoading = function(loading) {
-    this.uploadBtn.disabled = loading;
-    this.uploadBtn.querySelector('.btn-text').style.display = loading ? 'none' : 'inline';
-    this.uploadBtn.querySelector('.btn-loading').style.display = loading ? 'inline' : 'none';
+CatboxUploader.prototype.addIncrementalResult = function(result) {
+    var item = document.createElement('div');
+    item.className = 'result-item ' + result.type;
+    item.id = 'result-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+
+    if (result.type === 'success') {
+        item.innerHTML = '<a href="' + result.url + '" target="_blank">' + result.url + '</a>';
+    } else {
+        item.textContent = result.message;
+    }
+
+    var existingItems = this.resultsContent.querySelectorAll('.result-item');
+    if (existingItems.length > 0) {
+        this.resultsContent.insertBefore(item, existingItems[existingItems.length - 1].nextSibling);
+    } else {
+        this.resultsContent.appendChild(item);
+    }
+
+    item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 };
 
 CatboxUploader.prototype.displayResults = function(results, totalFiles) {
