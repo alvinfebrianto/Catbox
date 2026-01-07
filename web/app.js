@@ -532,6 +532,8 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
                     self.updateProgress((completedFiles / totalFiles) * 100, 'Rate limited. Waiting ' + waitSeconds + 's...');
                     setTimeout(processNextBurst, waitSeconds * 1000);
                 } else {
+                    var rateLimitNotice = self.resultsContent.querySelector('#rate-limit-notice');
+                    if (rateLimitNotice) rateLimitNotice.remove();
                     filesToUpload = filesToUpload.slice(burstSize);
                     if (filesToUpload.length > 0) {
                         setTimeout(processNextBurst, 200);
@@ -557,6 +559,14 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
                     self.updateProgress(((completedFiles + uploadedCount + (indicesToUpload.length - idx - 1)) / totalFiles) * 100, 'Uploaded: ' + lastResult.url);
                 } else if (err && (err.message.indexOf('Rate limit') !== -1 || err.message.indexOf('429') !== -1 || err.message.indexOf('Too Many Requests') !== -1)) {
                     rateLimited = true;
+                    var rateLimitNotice = document.createElement('div');
+                    rateLimitNotice.className = 'result-item warning';
+                    rateLimitNotice.textContent = 'Rate limited! Waiting ' + Math.ceil(rateLimitState.resetAfter) + 's before next upload...';
+                    rateLimitNotice.id = 'rate-limit-notice';
+                    var existingNotice = self.resultsContent.querySelector('#rate-limit-notice');
+                    if (existingNotice) existingNotice.remove();
+                    self.resultsContent.insertBefore(rateLimitNotice, self.resultsContent.firstChild);
+                    rateLimitNotice.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 }
                 uploadNext(idx + 1);
             });
@@ -726,7 +736,9 @@ CatboxUploader.prototype.addIncrementalResult = function(result) {
         this.resultsContent.appendChild(item);
     }
 
-    item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    setTimeout(function() {
+        item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 100);
 };
 
 CatboxUploader.prototype.setLoading = function(loading) {
