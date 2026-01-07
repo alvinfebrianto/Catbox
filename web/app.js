@@ -428,6 +428,8 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
     var collectionToken = '';
     var totalFiles = this.files.length;
     var completedFiles = 0;
+    var filesToUpload = [];
+    for (var i = 0; i < totalFiles; i++) filesToUpload.push(i);
     var rateLimitState = {
         limit: 5,
         remaining: 5,
@@ -444,7 +446,8 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
         };
     };
 
-    var uploadFile = function(file, callback) {
+    var uploadFile = function(fileIndex, callback) {
+        var file = self.files[fileIndex];
         self.updateProgress((completedFiles / totalFiles) * 100, 'Uploading ' + file.name + '...');
 
         var formData = new FormData();
@@ -474,8 +477,7 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
             if (newRateLimit.bucket) rateLimitState.bucket = newRateLimit.bucket;
 
             if (response.status === 429) {
-                var errorMsg = 'Rate limit exceeded';
-                throw new Error(errorMsg);
+                throw new Error('Rate limit exceeded');
             }
 
             return response.json().then(function(data) {
@@ -490,73 +492,59 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
         .then(function(data) {
             results.push({ type: 'success', url: data.url });
             completedFiles++;
-            callback(null, data);
+            callback(null, true);
         })
         .catch(function(error) {
-            callback(error);
+            callback(error, false);
         });
     };
 
-    var uploadBurst = function(startIndex, count, callback) {
-        var uploadedInBurst = 0;
-        var errorsInBurst = 0;
-        var rateLimitedFiles = [];
-        var hasRateLimited = false;
-
-        var uploadNextInBurst = function(index) {
-            if (index >= count || hasRateLimited) {
-                callback(uploadedInBurst, errorsInBurst, rateLimitedFiles, hasRateLimited);
-                return;
-            }
-
-            var file = self.files[startIndex + index];
-            uploadFile(file, function(err, data) {
-                if (err) {
-                    errorsInBurst++;
-                    if (err.message.indexOf('Rate limit') !== -1 || err.message.indexOf('429') !== -1 || err.message.indexOf('Too Many Requests') !== -1) {
-                        hasRateLimited = true;
-                        rateLimitedFiles.push(file);
-                    }
-                } else {
-                    uploadedInBurst++;
-                }
-                uploadNextInBurst(index + 1);
-            });
-        };
-
-        uploadNextInBurst(0);
-    };
-
     var processNextBurst = function() {
-        if (completedFiles >= totalFiles) {
+        if (filesToUpload.length === 0) {
             self.updateProgress(100, 'Done!');
             self.displayResults(results, totalFiles);
             return;
         }
 
-        var burstSize = Math.min(4, totalFiles - completedFiles);
+        var burstSize = Math.min(4, filesToUpload.length);
         var currentRemaining = rateLimitState.remaining;
 
         if (currentRemaining < burstSize && currentRemaining > 0) {
             burstSize = currentRemaining;
         }
 
-        self.updateProgress((completedFiles / totalFiles) * 100, 'Uploading ' + (completedFiles + 1) + '-' + (completedFiles + burstSize) + ' of ' + totalFiles + '...');
+        var indicesToUpload = filesToUpload.slice(0, burstSize);
+        var uploadedCount = 0;
+        var rateLimited = false;
+        var filesUploaded = [];
+        var filesRateLimited = [];
 
-        uploadBurst(completedFiles, burstSize, function(uploaded, errors, rateLimitedFiles, rateLimited) {
-            completedFiles += uploaded;
-
-            if (rateLimitedFiles.length > 0) {
-                var waitSeconds = Math.ceil(rateLimitState.resetAfter) + 1;
-                self.updateProgress((completedFiles / totalFiles) * 100, 'Rate limited. Waiting ' + waitSeconds + 's...');
-                setTimeout(processNextBurst, waitSeconds * 1000);
-            } else if (completedFiles < totalFiles) {
-                setTimeout(processNextBurst, 200);
-            } else {
-                self.updateProgress(100, 'Done!');
-                self.displayResults(results, totalFiles);
+        var uploadNext = function(idx) {
+            if (idx >= indicesToUpload.length) {
+                filesToUpload = filesToUpload.slice(burstSize);
+                if (rateLimited) {
+                    var waitSeconds = Math.ceil(rateLimitState.resetAfter) + 1;
+                    self.updateProgress((completedFiles / totalFiles) * 100, 'Rate limited. Waiting ' + waitSeconds + 's...');
+                    setTimeout(processNextBurst, waitSeconds * 1000);
+                } else {
+                    setTimeout(processNextBurst, 200);
+                }
+                return;
             }
-        });
+
+            var fileIndex = indicesToUpload[idx];
+            uploadFile(fileIndex, function(err, success) {
+                if (success) {
+                    uploadedCount++;
+                } else if (err && (err.message.indexOf('Rate limit') !== -1 || err.message.indexOf('429') !== -1 || err.message.indexOf('Too Many Requests') !== -1)) {
+                    rateLimited = true;
+                }
+                uploadNext(idx + 1);
+            });
+        };
+
+        self.updateProgress((completedFiles / totalFiles) * 100, 'Uploading ' + (completedFiles + 1) + '-' + (completedFiles + indicesToUpload.length) + ' of ' + totalFiles + '...');
+        uploadNext(0);
     };
 
     if (createCollection) {
