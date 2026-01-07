@@ -484,6 +484,9 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
                 if (!response.ok) {
                     var msg = data.message || (data.error && data.error.message) || data.error || response.statusText;
                     if (typeof msg === 'object') msg = JSON.stringify(msg);
+                    if (data.rateLimitResetAfter) {
+                        rateLimitState.resetAfter = parseFloat(data.rateLimitResetAfter) || 60;
+                    }
                     throw new Error('Upload failed: ' + msg);
                 }
                 return data;
