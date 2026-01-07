@@ -2,6 +2,7 @@ function CatboxUploader() {
     this.files = [];
     this.provider = localStorage.getItem('catbox_provider') || 'imgchest';
     this.uploadCompleted = false;
+    this.apiBaseUrl = typeof API_BASE_URL !== 'undefined' ? API_BASE_URL : '';
     this.init();
 }
 
@@ -291,14 +292,17 @@ CatboxUploader.prototype.uploadToCatbox = function(results, urls) {
     var totalItems = this.files.length + urls.length;
     var completedItems = 0;
 
-    var uploadFile = function(file, callback) {
-        self.updateProgress((completedItems / totalItems) * 100, 'Uploading ' + file.name + '...');
+        var self = this;
+        var apiBaseUrl = self.apiBaseUrl;
 
-        var formData = new FormData();
-        formData.append('reqtype', 'fileupload');
-        formData.append('fileToUpload', file);
+        var uploadFile = function(file, callback) {
+            self.updateProgress((completedItems / totalItems) * 100, 'Uploading ' + file.name + '...');
 
-        fetch('/upload/catbox', {
+            var formData = new FormData();
+            formData.append('reqtype', 'fileupload');
+            formData.append('fileToUpload', file);
+
+            fetch(apiBaseUrl + '/upload/catbox', {
             method: 'POST',
             body: formData
         })
@@ -327,7 +331,7 @@ CatboxUploader.prototype.uploadToCatbox = function(results, urls) {
         formData.append('reqtype', 'urlupload');
         formData.append('url', url);
 
-        fetch('/upload/catbox', {
+        fetch(apiBaseUrl + '/upload/catbox', {
             method: 'POST',
             body: formData
         })
@@ -370,7 +374,7 @@ CatboxUploader.prototype.uploadToCatbox = function(results, urls) {
             albumFormData.append('desc', description);
             albumFormData.append('files', fileNames.join(' '));
 
-        fetch('/upload/catbox', {
+        fetch(apiBaseUrl + '/upload/catbox', {
                 method: 'POST',
                 body: albumFormData
             })
@@ -415,6 +419,7 @@ CatboxUploader.prototype.uploadToCatbox = function(results, urls) {
 
 CatboxUploader.prototype.uploadToSxcu = function(results) {
     var self = this;
+    var apiBaseUrl = self.apiBaseUrl;
     var createCollection = document.getElementById('createCollection').checked;
     var isPrivate = document.getElementById('sxcuPrivate').checked;
     var title = this.titleInput.value;
@@ -439,7 +444,7 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
             formData.append('collection_token', collectionToken);
         }
 
-        fetch('/upload/sxcu/files', {
+        fetch(apiBaseUrl + '/upload/sxcu/files', {
             method: 'POST',
             body: formData,
             headers: {
@@ -486,7 +491,7 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
         formData.append('desc', description);
         formData.append('private', isPrivate ? 'true' : 'false');
 
-        fetch('/upload/sxcu/collections', {
+        fetch(apiBaseUrl + '/upload/sxcu/collections', {
             method: 'POST',
             body: formData,
             headers: {
@@ -545,6 +550,7 @@ CatboxUploader.prototype.uploadToImgchest = function(results) {
 
 CatboxUploader.prototype.uploadImgchestPost = function(postId, files, results, totalFiles) {
     var self = this;
+    var apiBaseUrl = self.apiBaseUrl;
     var anonymous = document.getElementById('anonymous').checked;
     var title = this.titleInput.value;
 
@@ -561,8 +567,8 @@ CatboxUploader.prototype.uploadImgchestPost = function(postId, files, results, t
     }
 
     var url = postId
-        ? '/upload/imgchest/post/' + postId + '/add'
-        : '/upload/imgchest/post';
+        ? apiBaseUrl + '/upload/imgchest/post/' + postId + '/add'
+        : apiBaseUrl + '/upload/imgchest/post';
 
     fetch(url, {
         method: 'POST',

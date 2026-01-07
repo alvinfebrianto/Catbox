@@ -1,2 +1,5 @@
 *.json
-*temp*/
+*temp/
+catbox_*_rate_limit.json
+.wrangler/
+dist/
