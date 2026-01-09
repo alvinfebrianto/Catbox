@@ -148,7 +148,7 @@ CatboxUploader.prototype.updateUI = function() {
 
     this.urlGroup.classList.toggle('hidden', isSxcu || isImgchest);
     this.createCollectionGroup.classList.toggle('hidden', !isSxcu);
-    
+
     if (this.sxcuOptions) {
         var createCollectionChecked = document.getElementById('createCollection').checked;
         this.sxcuOptions.classList.toggle('hidden', !isSxcu || !createCollectionChecked);
@@ -477,7 +477,7 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
         if (collectionId) {
             formData.append('collection', collectionId);
         }
-        
+
         if (collectionToken) {
             formData.append('collection_token', collectionToken);
         }
@@ -742,7 +742,7 @@ CatboxUploader.prototype.updateProgress = function(percent, text) {
 CatboxUploader.prototype.addIncrementalResult = function(result, index) {
     var item = document.createElement('div');
     item.className = 'result-item ' + result.type;
-    
+
     if (result.isAlbum || result.isCollection || result.isPost) {
         item.className += ' highlight';
     }
@@ -752,11 +752,11 @@ CatboxUploader.prototype.addIncrementalResult = function(result, index) {
 
     if (result.type === 'success') {
         if (result.isAlbum) {
-            item.innerHTML = 'Album URL: <a href="' + result.url + '" target="_blank">' + result.url + '</a>';
+            item.innerHTML = 'Album: <a href="' + result.url + '" target="_blank">' + result.url + '</a>';
         } else if (result.isCollection) {
             item.innerHTML = 'Collection: <a href="' + result.url + '" target="_blank">' + result.url + '</a>';
         } else if (result.isPost) {
-            item.innerHTML = 'Post URL: <a href="' + result.url + '" target="_blank">' + result.url + '</a>';
+            item.innerHTML = 'Post: <a href="' + result.url + '" target="_blank">' + result.url + '</a>';
         } else {
             item.innerHTML = '<a href="' + result.url + '" target="_blank">' + result.url + '</a>';
         }
@@ -772,7 +772,7 @@ CatboxUploader.prototype.addIncrementalResult = function(result, index) {
 
     var summaryContainer = this.resultsContent.querySelector('#final-summary');
     var existingItems = this.resultsContent.querySelectorAll('.result-item');
-    
+
     if (insertAfterSummary) {
         if (summaryContainer && summaryContainer.nextSibling) {
             this.resultsContent.insertBefore(item, summaryContainer.nextSibling);
@@ -814,8 +814,8 @@ CatboxUploader.prototype.displayResults = function(results, totalFiles) {
         hasSummary.remove();
     }
 
-    var imageUploads = results.filter(function(r) { 
-        return r.type === 'success' && !r.isPost && !r.isAlbum && !r.isCollection; 
+    var imageUploads = results.filter(function(r) {
+        return r.type === 'success' && !r.isPost && !r.isAlbum && !r.isCollection;
     }).length;
     var failed = results.filter(function(r) { return r.type === 'error'; }).length;
     var warnings = results.filter(function(r) { return r.type === 'warning'; }).length;
@@ -846,7 +846,7 @@ CatboxUploader.prototype.displayResults = function(results, totalFiles) {
     this.resultsContent.insertBefore(summaryContainer, existingItems.length > 0 ? existingItems[0] : null);
 
     var newItems = [];
-    
+
     // Sort logic: Special items first, then others
     var sortedIndices = [];
     var specialIndices = [];
@@ -865,7 +865,7 @@ CatboxUploader.prototype.displayResults = function(results, totalFiles) {
         var i = sortedIndices[k];
         var result = results[i];
         var existingItem = this.resultsContent.querySelector('[data-result-index="' + i + '"]');
-        
+
         if (!existingItem) {
             var item = document.createElement('div');
             item.className = 'result-item ' + result.type;
@@ -905,7 +905,7 @@ CatboxUploader.prototype.displayResults = function(results, totalFiles) {
              // OR we can just clear and re-render everything if order is critical.
              // Given the user wants "distinct and at top", maybe re-ordering is safer.
              // But existingItem check prevents re-creation.
-             
+
              // Let's collect ALL items (existing + new) in correct order and append them.
              newItems.push(existingItem);
         }

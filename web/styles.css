@@ -414,6 +414,17 @@ select option {
     border-color: rgba(81, 207, 102, 0.2);
 }
 
+.results .result-item.highlight {
+    background: rgba(94, 106, 210, 0.15);
+    border-color: rgba(94, 106, 210, 0.4);
+    margin-bottom: 20px;
+    padding: 16px;
+    font-size: 14px;
+    font-weight: 500;
+    justify-content: flex-start;
+    gap: 8px;
+}
+
 .results .result-item a {
     color: var(--accent-color);
     text-decoration: none;
