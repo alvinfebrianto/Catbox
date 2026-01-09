@@ -742,20 +742,55 @@ CatboxUploader.prototype.updateProgress = function(percent, text) {
 CatboxUploader.prototype.addIncrementalResult = function(result, index) {
     var item = document.createElement('div');
     item.className = 'result-item ' + result.type;
+    
+    if (result.isAlbum || result.isCollection || result.isPost) {
+        item.className += ' highlight';
+    }
+
     item.setAttribute('data-result-index', index);
     item.id = 'result-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
 
     if (result.type === 'success') {
-        item.innerHTML = '<a href="' + result.url + '" target="_blank">' + result.url + '</a>';
+        if (result.isAlbum) {
+            item.innerHTML = 'Album URL: <a href="' + result.url + '" target="_blank">' + result.url + '</a>';
+        } else if (result.isCollection) {
+            item.innerHTML = 'Collection: <a href="' + result.url + '" target="_blank">' + result.url + '</a>';
+        } else if (result.isPost) {
+            item.innerHTML = 'Post URL: <a href="' + result.url + '" target="_blank">' + result.url + '</a>';
+        } else {
+            item.innerHTML = '<a href="' + result.url + '" target="_blank">' + result.url + '</a>';
+        }
     } else {
         item.textContent = result.message;
     }
 
+    // Determine insertion point
+    var insertAfterSummary = false;
+    if (result.isAlbum || result.isCollection || result.isPost) {
+        insertAfterSummary = true;
+    }
+
+    var summaryContainer = this.resultsContent.querySelector('#final-summary');
     var existingItems = this.resultsContent.querySelectorAll('.result-item');
-    if (existingItems.length > 0) {
-        this.resultsContent.insertBefore(item, existingItems[existingItems.length - 1].nextSibling);
+    
+    if (insertAfterSummary) {
+        if (summaryContainer && summaryContainer.nextSibling) {
+            this.resultsContent.insertBefore(item, summaryContainer.nextSibling);
+        } else if (summaryContainer) {
+             this.resultsContent.appendChild(item);
+        } else if (existingItems.length > 0) {
+             this.resultsContent.insertBefore(item, existingItems[0]);
+        } else {
+             this.resultsContent.appendChild(item);
+        }
     } else {
-        this.resultsContent.appendChild(item);
+        if (existingItems.length > 0) {
+             // Find the last non-highlight item or just append if we don't care about sorting normal items strictly
+             // But normal items should appear after highlights
+             this.resultsContent.appendChild(item);
+        } else {
+             this.resultsContent.appendChild(item);
+        }
     }
 
     setTimeout(function() {
@@ -811,13 +846,32 @@ CatboxUploader.prototype.displayResults = function(results, totalFiles) {
     this.resultsContent.insertBefore(summaryContainer, existingItems.length > 0 ? existingItems[0] : null);
 
     var newItems = [];
+    
+    // Sort logic: Special items first, then others
+    var sortedIndices = [];
+    var specialIndices = [];
+    var normalIndices = [];
+
     for (var i = 0; i < results.length; i++) {
+        if (results[i].isAlbum || results[i].isCollection || results[i].isPost) {
+            specialIndices.push(i);
+        } else {
+            normalIndices.push(i);
+        }
+    }
+    sortedIndices = specialIndices.concat(normalIndices);
+
+    for (var k = 0; k < sortedIndices.length; k++) {
+        var i = sortedIndices[k];
         var result = results[i];
         var existingItem = this.resultsContent.querySelector('[data-result-index="' + i + '"]');
         
         if (!existingItem) {
             var item = document.createElement('div');
             item.className = 'result-item ' + result.type;
+            if (result.isAlbum || result.isCollection || result.isPost) {
+                item.className += ' highlight';
+            }
             item.setAttribute('data-result-index', i);
 
             if (result.type === 'success') {
@@ -837,9 +891,27 @@ CatboxUploader.prototype.displayResults = function(results, totalFiles) {
             }
 
             newItems.push(item);
+        } else {
+             // If item exists, ensure it has the highlight class if needed (fixes race conditions)
+             if (result.isAlbum || result.isCollection || result.isPost) {
+                 if (!existingItem.classList.contains('highlight')) {
+                     existingItem.classList.add('highlight');
+                 }
+             }
+             // We might need to re-order existing items if they are not in the correct visual order
+             // But for now, we assume addIncrementalResult handled it or we just append new ones.
+             // Ideally, we should detach and re-append in order, but that might be expensive.
+             // Let's just append new items for now, assuming incremental updates placed them roughly correctly
+             // OR we can just clear and re-render everything if order is critical.
+             // Given the user wants "distinct and at top", maybe re-ordering is safer.
+             // But existingItem check prevents re-creation.
+             
+             // Let's collect ALL items (existing + new) in correct order and append them.
+             newItems.push(existingItem);
         }
     }
 
+    // Re-append all items in the sorted order
     for (var j = 0; j < newItems.length; j++) {
         this.resultsContent.appendChild(newItems[j]);
     }

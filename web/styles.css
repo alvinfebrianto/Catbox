@@ -270,6 +270,12 @@ header p {
     color: #9a7b0a;
 }
 
+.results .result-item.highlight {
+    background: #e1f5fe;
+    border: 1px solid #b3e5fc;
+    font-weight: 500;
+}
+
 .results .result-item a {
     color: #3498db;
     text-decoration: none;
