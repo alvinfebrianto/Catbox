@@ -3,10 +3,16 @@ import { writeFileSync, unlinkSync, mkdirSync, existsSync, readFileSync } from "
 
 const PORT = 3000;
 const TEMP_DIR = "./temp_uploads";
-const IMGCHEST_TOKEN_FILE = "C:\\Users\\lenovo\\AppData\\Roaming\\catbox_web_imgchest_token.txt";
+let IMGCHEST_TOKEN_FILE = "C:\\Users\\lenovo\\AppData\\Roaming\\catbox_web_imgchest_token.txt";
 
-if (!existsSync(TEMP_DIR)) {
-  mkdirSync(TEMP_DIR, { recursive: true });
+function setImgchestTokenFile(path) {
+  IMGCHEST_TOKEN_FILE = path;
+}
+
+if (import.meta.main) {
+  if (!existsSync(TEMP_DIR)) {
+    mkdirSync(TEMP_DIR, { recursive: true });
+  }
 }
 
 function getImgchestToken() {
@@ -481,51 +487,69 @@ async function waitForRateLimitAsync(provider, cost = 1) {
   }
 }
 
-const server = serve({
-  port: PORT,
+if (import.meta.main) {
+  const server = serve({
+    port: PORT,
 
-  fetch(req) {
-    const url = new URL(req.url);
-    const method = req.method;
-    const path = url.pathname;
+    fetch(req) {
+      const url = new URL(req.url);
+      const method = req.method;
+      const path = url.pathname;
 
-    // API routes
-    if (method === "POST" && path === "/upload/catbox") {
-      return handleCatboxUpload(req);
-    }
+      // API routes
+      if (method === "POST" && path === "/upload/catbox") {
+        return handleCatboxUpload(req);
+      }
 
-    if (method === "POST" && path === "/upload/sxcu/collections") {
-      return handleSxcuCollections(req);
-    }
+      if (method === "POST" && path === "/upload/sxcu/collections") {
+        return handleSxcuCollections(req);
+      }
 
-    if (method === "POST" && path === "/upload/sxcu/files") {
-      return handleSxcuFiles(req);
-    }
+      if (method === "POST" && path === "/upload/sxcu/files") {
+        return handleSxcuFiles(req);
+      }
 
-    if (method === "POST" && path === "/upload/imgchest/post") {
-      return handleImgchestPost(req);
-    }
+      if (method === "POST" && path === "/upload/imgchest/post") {
+        return handleImgchestPost(req);
+      }
 
-    if (method === "POST" && path.startsWith("/upload/imgchest/post/") && path.endsWith("/add")) {
-      return handleImgchestAdd(req);
-    }
+      if (method === "POST" && path.startsWith("/upload/imgchest/post/") && path.endsWith("/add")) {
+        return handleImgchestAdd(req);
+      }
 
-    // Serve static files
-    const filePath = path === "/" ? "./index.html" : "." + path;
-    if (existsSync(filePath)) {
-      const file = Bun.file(filePath);
-      const ext = filePath.split(".").pop();
-      const contentTypes = {
-        html: "text/html",
-        css: "text/css",
-        js: "application/javascript",
-      };
-      return new Response(file, {
-        headers: { "Content-Type": contentTypes[ext] || "text/plain" },
-      });
-    }
-    return new Response("Not Found", { status: 404 });
-  },
-});
+      // Serve static files
+      const filePath = path === "/" ? "./index.html" : "." + path;
+      if (existsSync(filePath)) {
+        const file = Bun.file(filePath);
+        const ext = filePath.split(".").pop();
+        const contentTypes = {
+          html: "text/html",
+          css: "text/css",
+          js: "application/javascript",
+        };
+        return new Response(file, {
+          headers: { "Content-Type": contentTypes[ext] || "text/plain" },
+        });
+      }
+      return new Response("Not Found", { status: 404 });
+    },
+  });
 
-console.log(`Server running at http://localhost:${PORT}`);
+  console.log(`Server running at http://localhost:${PORT}`);
+}
+
+export {
+  getImgchestToken,
+  setImgchestTokenFile,
+  getRateLimitFile,
+  getRateLimit,
+  setRateLimit,
+  clearRateLimit,
+  waitForRateLimitAsync,
+  handleCatboxUpload,
+  handleSxcuCollections,
+  handleSxcuFiles,
+  handleImgchestPost,
+  handleImgchestAdd,
+  MAX_IMGCHEST_IMAGES_PER_REQUEST,
+};

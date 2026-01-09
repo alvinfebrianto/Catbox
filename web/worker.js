@@ -391,3 +391,12 @@ async function handleImgchestAdd(request, env) {
     status: 200,
   });
 }
+
+export {
+  handleCatboxUpload,
+  handleSxcuCollections,
+  handleSxcuFiles,
+  handleImgchestPost,
+  handleImgchestAdd,
+  CORS_HEADERS,
+};
