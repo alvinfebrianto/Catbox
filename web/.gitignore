@@ -1,6 +1,6 @@
 *.json
 .env
+.wrangler/
 *temp/
 catbox_*_rate_limit.json
-.wrangler/
 dist/

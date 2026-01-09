@@ -316,14 +316,14 @@ CatboxUploader.prototype.uploadToCatbox = function(results, urls) {
         .then(function(url) {
             var result = { type: 'success', url: url.trim() };
             results.push(result);
-            self.addIncrementalResult(result);
+            self.addIncrementalResult(result, results.length - 1);
             completedItems++;
             callback();
         })
         .catch(function(error) {
             var result = { type: 'error', message: 'Failed to upload ' + file.name + ': ' + error.message };
             results.push(result);
-            self.addIncrementalResult(result);
+            self.addIncrementalResult(result, results.length - 1);
             completedItems++;
             callback();
         });
@@ -349,14 +349,14 @@ CatboxUploader.prototype.uploadToCatbox = function(results, urls) {
         .then(function(uploadedUrl) {
             var result = { type: 'success', url: uploadedUrl.trim() };
             results.push(result);
-            self.addIncrementalResult(result);
+            self.addIncrementalResult(result, results.length - 1);
             completedItems++;
             callback();
         })
         .catch(function(error) {
             var result = { type: 'error', message: 'Failed to upload ' + url + ': ' + error.message };
             results.push(result);
-            self.addIncrementalResult(result);
+            self.addIncrementalResult(result, results.length - 1);
             completedItems++;
             callback();
         });
@@ -397,14 +397,14 @@ CatboxUploader.prototype.uploadToCatbox = function(results, urls) {
                 var albumUrl = albumCode.indexOf('http') === 0 ? albumCode : 'https://catbox.moe/album/' + albumCode;
                 var albumResult = { type: 'success', url: albumUrl, isAlbum: true };
                 results.push(albumResult);
-                self.addIncrementalResult(albumResult);
+                self.addIncrementalResult(albumResult, results.length - 1);
                 self.updateProgress(100, 'Done!');
                 self.displayResults(results, totalItems);
             })
             .catch(function(error) {
                 var errorResult = { type: 'error', message: 'Failed to create album: ' + error.message };
                 results.push(errorResult);
-                self.addIncrementalResult(errorResult);
+                self.addIncrementalResult(errorResult, results.length - 1);
                 self.updateProgress(100, 'Done!');
                 self.displayResults(results, totalItems);
             });
@@ -575,7 +575,7 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
                     uploadedCount++;
                     var lastResult = results[results.length - 1];
                     if (lastResult && lastResult.type === 'success') {
-                        self.addIncrementalResult(lastResult);
+                        self.addIncrementalResult(lastResult, results.length - 1);
                     }
                     self.updateProgress(((completedFiles + uploadedCount + (indicesToUpload.length - idx - 1)) / totalFiles) * 100, 'Uploaded: ' + lastResult.url);
                 } else if (err && (err.message.indexOf('Rate limit') !== -1 || err.message.indexOf('429') !== -1 || err.message.indexOf('Too Many Requests') !== -1)) {
@@ -629,7 +629,7 @@ CatboxUploader.prototype.uploadToSxcu = function(results) {
 
             var collectionResult = { type: 'success', url: 'https://sxcu.net/c/' + collectionId, isCollection: true };
             results.push(collectionResult);
-            self.addIncrementalResult(collectionResult);
+            self.addIncrementalResult(collectionResult, results.length - 1);
             self.updateProgress(0, 'Collection created. Starting uploads...');
             processNextBurst();
         })
@@ -739,10 +739,10 @@ CatboxUploader.prototype.updateProgress = function(percent, text) {
     this.progressText.textContent = text;
 };
 
-CatboxUploader.prototype.addIncrementalResult = function(result) {
+CatboxUploader.prototype.addIncrementalResult = function(result, index) {
     var item = document.createElement('div');
     item.className = 'result-item ' + result.type;
-    item.setAttribute('data-result-index', results.length - 1);
+    item.setAttribute('data-result-index', index);
     item.id = 'result-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
 
     if (result.type === 'success') {
