@@ -314,12 +314,16 @@ CatboxUploader.prototype.uploadToCatbox = function(results, urls) {
             return response.text();
         })
         .then(function(url) {
-            results.push({ type: 'success', url: url.trim() });
+            var result = { type: 'success', url: url.trim() };
+            results.push(result);
+            self.addIncrementalResult(result);
             completedItems++;
             callback();
         })
         .catch(function(error) {
-            results.push({ type: 'error', message: 'Failed to upload ' + file.name + ': ' + error.message });
+            var result = { type: 'error', message: 'Failed to upload ' + file.name + ': ' + error.message };
+            results.push(result);
+            self.addIncrementalResult(result);
             completedItems++;
             callback();
         });
@@ -343,12 +347,16 @@ CatboxUploader.prototype.uploadToCatbox = function(results, urls) {
             return response.text();
         })
         .then(function(uploadedUrl) {
-            results.push({ type: 'success', url: uploadedUrl.trim() });
+            var result = { type: 'success', url: uploadedUrl.trim() };
+            results.push(result);
+            self.addIncrementalResult(result);
             completedItems++;
             callback();
         })
         .catch(function(error) {
-            results.push({ type: 'error', message: 'Failed to upload ' + url + ': ' + error.message });
+            var result = { type: 'error', message: 'Failed to upload ' + url + ': ' + error.message };
+            results.push(result);
+            self.addIncrementalResult(result);
             completedItems++;
             callback();
         });
@@ -387,12 +395,16 @@ CatboxUploader.prototype.uploadToCatbox = function(results, urls) {
             })
             .then(function(albumCode) {
                 var albumUrl = albumCode.indexOf('http') === 0 ? albumCode : 'https://catbox.moe/album/' + albumCode;
-                results.push({ type: 'success', url: albumUrl, isAlbum: true });
+                var albumResult = { type: 'success', url: albumUrl, isAlbum: true };
+                results.push(albumResult);
+                self.addIncrementalResult(albumResult);
                 self.updateProgress(100, 'Done!');
                 self.displayResults(results, totalItems);
             })
             .catch(function(error) {
-                results.push({ type: 'error', message: 'Failed to create album: ' + error.message });
+                var errorResult = { type: 'error', message: 'Failed to create album: ' + error.message };
+                results.push(errorResult);
+                self.addIncrementalResult(errorResult);
                 self.updateProgress(100, 'Done!');
                 self.displayResults(results, totalItems);
             });
@@ -730,6 +742,7 @@ CatboxUploader.prototype.updateProgress = function(percent, text) {
 CatboxUploader.prototype.addIncrementalResult = function(result) {
     var item = document.createElement('div');
     item.className = 'result-item ' + result.type;
+    item.setAttribute('data-result-index', results.length - 1);
     item.id = 'result-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
 
     if (result.type === 'success') {
@@ -758,7 +771,13 @@ CatboxUploader.prototype.setLoading = function(loading) {
 
 CatboxUploader.prototype.displayResults = function(results, totalFiles) {
     this.resultsDiv.style.display = 'block';
-    this.resultsContent.innerHTML = '';
+
+    var existingItems = this.resultsContent.querySelectorAll('.result-item');
+    var hasSummary = this.resultsContent.querySelector('.summary');
+
+    if (hasSummary) {
+        hasSummary.remove();
+    }
 
     var imageUploads = results.filter(function(r) { 
         return r.type === 'success' && !r.isPost && !r.isAlbum && !r.isCollection; 
@@ -784,30 +803,45 @@ CatboxUploader.prototype.displayResults = function(results, totalFiles) {
     var summary = document.createElement('div');
     summary.className = 'summary ' + (failed > 0 ? 'warning' : 'success');
     summary.textContent = summaryText;
-    this.resultsContent.appendChild(summary);
 
+    var summaryContainer = document.createElement('div');
+    summaryContainer.id = 'final-summary';
+    summaryContainer.appendChild(summary);
+
+    this.resultsContent.insertBefore(summaryContainer, existingItems.length > 0 ? existingItems[0] : null);
+
+    var newItems = [];
     for (var i = 0; i < results.length; i++) {
         var result = results[i];
-        var item = document.createElement('div');
-        item.className = 'result-item ' + result.type;
+        var existingItem = this.resultsContent.querySelector('[data-result-index="' + i + '"]');
+        
+        if (!existingItem) {
+            var item = document.createElement('div');
+            item.className = 'result-item ' + result.type;
+            item.setAttribute('data-result-index', i);
 
-        if (result.type === 'success') {
-            if (result.isAlbum) {
-                item.innerHTML = 'Album URL: <a href="' + result.url + '" target="_blank">' + result.url + '</a>';
-            } else if (result.isCollection) {
-                item.innerHTML = 'Collection: <a href="' + result.url + '" target="_blank">' + result.url + '</a>';
-            } else if (result.isPost) {
-                item.innerHTML = 'Post URL: <a href="' + result.url + '" target="_blank">' + result.url + '</a>';
+            if (result.type === 'success') {
+                if (result.isAlbum) {
+                    item.innerHTML = 'Album URL: <a href="' + result.url + '" target="_blank">' + result.url + '</a>';
+                } else if (result.isCollection) {
+                    item.innerHTML = 'Collection: <a href="' + result.url + '" target="_blank">' + result.url + '</a>';
+                } else if (result.isPost) {
+                    item.innerHTML = 'Post URL: <a href="' + result.url + '" target="_blank">' + result.url + '</a>';
+                } else {
+                    item.innerHTML = '<a href="' + result.url + '" target="_blank">' + result.url + '</a>';
+                }
+            } else if (result.type === 'warning') {
+                item.textContent = result.message;
             } else {
-                item.innerHTML = '<a href="' + result.url + '" target="_blank">' + result.url + '</a>';
+                item.textContent = result.message;
             }
-        } else if (result.type === 'warning') {
-            item.textContent = result.message;
-        } else {
-            item.textContent = result.message;
-        }
 
-        this.resultsContent.appendChild(item);
+            newItems.push(item);
+        }
+    }
+
+    for (var j = 0; j < newItems.length; j++) {
+        this.resultsContent.appendChild(newItems[j]);
     }
 };
 
