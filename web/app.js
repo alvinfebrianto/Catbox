@@ -26,6 +26,7 @@ CatboxUploader.prototype.init = function() {
     this.urlsInput = document.getElementById('urls');
     this.titleInput = document.getElementById('title');
     this.postIdInput = document.getElementById('postId');
+    this.fileTypesHint = document.getElementById('fileTypesHint');
 
     this.providerSelect.value = this.provider;
 
@@ -139,6 +140,12 @@ CatboxUploader.prototype.bindEvents = function() {
         self.dropZone.classList.remove('dragover');
         self.addFiles(e.dataTransfer.files);
     });
+
+    this.dropZone.addEventListener('click', function(e) {
+        if (e.target !== self.filesInput) {
+            self.filesInput.click();
+        }
+    });
 };
 
 CatboxUploader.prototype.updateUI = function() {
@@ -164,6 +171,16 @@ CatboxUploader.prototype.updateUI = function() {
 
     var fileInput = this.filesInput;
     fileInput.setAttribute('accept', allowedTypes.join(','));
+
+    if (this.fileTypesHint) {
+        if (isCatbox) {
+            this.fileTypesHint.textContent = 'Blocked: EXE, SCR, CPL, DOC*, JAR';
+        } else if (isSxcu) {
+            this.fileTypesHint.textContent = 'Allowed: PNG, GIF, JPEG, ICO, BMP, TIFF, WEBM, WEBP';
+        } else {
+            this.fileTypesHint.textContent = 'Allowed: JPG, JPEG, PNG, GIF, WEBP';
+        }
+    }
 };
 
 CatboxUploader.prototype.addFiles = function(fileList) {
