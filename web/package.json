@@ -1,0 +1,13 @@
+{
+  "name": "Image Uploader",
+  "version": "1.0.0",
+  "description": "Image uploader with multiple provider support",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "dev": "bun run server.js",
+    "test": "bun test"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
