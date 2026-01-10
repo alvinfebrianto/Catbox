@@ -1,15 +1,15 @@
 :root {
-    --bg-body: #08090A;
+    --bg-body: #08090a;
     --bg-surface: #141519; /* Slightly lighter for card */
-    --bg-surface-hover: #1A1B20;
+    --bg-surface-hover: #1a1b20;
     --border-color: rgba(255, 255, 255, 0.08);
     --border-hover: rgba(255, 255, 255, 0.15);
-    
-    --text-primary: #EDEDED;
-    --text-secondary: #8A8F98;
-    --text-tertiary: #585C65;
 
-    --accent-color: #5E6AD2;
+    --text-primary: #ededed;
+    --text-secondary: #8a8f98;
+    --text-tertiary: #585c65;
+
+    --accent-color: #5e6ad2;
     --accent-glow: rgba(94, 106, 210, 0.5);
     --focus-ring: rgba(94, 106, 210, 0.25);
 
@@ -17,8 +17,10 @@
     --radius-md: 12px;
     --radius-lg: 16px;
 
-    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    
+    --font-sans:
+        "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        sans-serif;
+
     --transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
 }
 
@@ -37,9 +39,17 @@ body {
     display: flex;
     justify-content: center;
     padding: 40px 20px;
-    background-image: 
-        radial-gradient(circle at 50% 0%, rgba(94, 106, 210, 0.15) 0%, transparent 50%),
-        radial-gradient(circle at 80% 10%, rgba(255, 255, 255, 0.03) 0%, transparent 30%);
+    background-image:
+        radial-gradient(
+            circle at 50% 0%,
+            rgba(94, 106, 210, 0.15) 0%,
+            transparent 50%
+        ),
+        radial-gradient(
+            circle at 80% 10%,
+            rgba(255, 255, 255, 0.03) 0%,
+            transparent 30%
+        );
     background-attachment: fixed;
 }
 
@@ -64,9 +74,9 @@ body {
     background: var(--bg-surface);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-lg);
-    box-shadow: 
-        0 0 0 1px rgba(0,0,0,0.2),
-        0 20px 40px rgba(0,0,0,0.4);
+    box-shadow:
+        0 0 0 1px rgba(0, 0, 0, 0.2),
+        0 20px 40px rgba(0, 0, 0, 0.4);
     padding: 40px;
     position: relative;
     overflow: hidden;
@@ -75,18 +85,22 @@ body {
 
 /* Subtle top highlight on container */
 .container::before {
-    content: '';
+    content: "";
     position: absolute;
     top: 0;
     left: 0;
     right: 0;
     height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+    background: linear-gradient(
+        90deg,
+        transparent,
+        rgba(255, 255, 255, 0.1),
+        transparent
+    );
 }
 
 header {
     text-align: center;
-    margin-bottom: 40px;
 }
 
 header h1 {
@@ -94,7 +108,7 @@ header h1 {
     font-weight: 500;
     letter-spacing: -0.5px;
     color: var(--text-primary);
-    margin-bottom: 8px;
+    margin-bottom: 16px;
     background: linear-gradient(to bottom right, #fff, #aaa);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
@@ -122,7 +136,7 @@ header p {
 input[type="text"],
 select {
     width: 100%;
-    background: rgba(0,0,0,0.2);
+    background: rgba(0, 0, 0, 0.2);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
     padding: 10px 12px;
@@ -135,7 +149,7 @@ select {
 input[type="text"]:hover,
 select:hover {
     border-color: var(--border-hover);
-    background: rgba(255,255,255,0.02);
+    background: rgba(255, 255, 255, 0.02);
 }
 
 input[type="text"]:focus,
@@ -143,7 +157,7 @@ select:focus {
     outline: none;
     border-color: var(--accent-color);
     box-shadow: 0 0 0 3px var(--focus-ring);
-    background: rgba(0,0,0,0.4);
+    background: rgba(0, 0, 0, 0.4);
 }
 
 /* Custom Select Dropdown Arrow */
@@ -175,7 +189,7 @@ select option {
     padding: 40px 20px;
     text-align: center;
     cursor: pointer;
-    background: rgba(255,255,255,0.01);
+    background: rgba(255, 255, 255, 0.01);
     transition: var(--transition);
     position: relative;
     overflow: hidden;
@@ -232,7 +246,7 @@ select option {
     align-items: center;
     justify-content: space-between;
     padding: 8px 12px;
-    background: rgba(255,255,255,0.03);
+    background: rgba(255, 255, 255, 0.03);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
     margin-bottom: 8px;
@@ -242,7 +256,7 @@ select option {
 }
 
 .file-item:hover {
-    background: rgba(255,255,255,0.05);
+    background: rgba(255, 255, 255, 0.05);
     border-color: var(--border-hover);
 }
 
@@ -302,7 +316,7 @@ select option {
     transform: translateY(-50%);
     width: 18px;
     height: 18px;
-    background: rgba(0,0,0,0.3);
+    background: rgba(0, 0, 0, 0.3);
     border: 1px solid var(--border-color);
     border-radius: 4px;
     transition: var(--transition);
@@ -319,7 +333,7 @@ select option {
 }
 
 .checkbox-label input[type="checkbox"]:checked ~ .checkmark::after {
-    content: '';
+    content: "";
     position: absolute;
     left: 5px;
     top: 2px;
@@ -347,17 +361,17 @@ select option {
 }
 
 .btn-primary {
-    background: linear-gradient(180deg, #FFFFFF 0%, #E0E0E0 100%);
-    box-shadow: 
-        0 1px 0 rgba(255,255,255,0.1) inset,
-        0 0 20px rgba(255,255,255,0.1);
+    background: linear-gradient(180deg, #ffffff 0%, #e0e0e0 100%);
+    box-shadow:
+        0 1px 0 rgba(255, 255, 255, 0.1) inset,
+        0 0 20px rgba(255, 255, 255, 0.1);
 }
 
 .btn-primary:hover {
     transform: translateY(-1px);
-    box-shadow: 
-        0 1px 0 rgba(255,255,255,0.1) inset,
-        0 0 25px rgba(255,255,255,0.2);
+    box-shadow:
+        0 1px 0 rgba(255, 255, 255, 0.1) inset,
+        0 0 25px rgba(255, 255, 255, 0.2);
 }
 
 .btn-primary:active {
@@ -375,7 +389,7 @@ select option {
 .results {
     margin-top: 32px;
     padding: 16px;
-    background: rgba(0,0,0,0.2);
+    background: rgba(0, 0, 0, 0.2);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
 }
@@ -386,21 +400,40 @@ select option {
     color: var(--text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    padding-left: 4px;
+    padding-left: 2px;
+}
+
+.results .summary {
+    padding: 16px 18px;
+    margin-bottom: 20px;
+    font-size: 15px;
+    font-weight: 600;
+    text-align: center;
+    border-radius: 8px;
+}
+
+.results .summary.success {
+    background: #1a3a1e;
+    border: 1px solid #2e7d32;
+    color: #4ade80;
+}
+
+.results .summary.warning {
+    background: #3a2a1a;
+    border: 1px solid #7d522e;
+    color: #fbbf24;
 }
 
 .results .result-item {
-    padding: 10px 14px;
-    background: rgba(255,255,255,0.03);
+    padding: 12px 14px;
+    background: rgba(255, 255, 255, 0.03);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
-    margin-bottom: 10px;
+    margin-bottom: 8px;
     word-break: break-all;
     font-size: 13px;
     color: var(--text-primary);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
+    text-align: left;
 }
 
 .results .result-item.error {
@@ -417,18 +450,17 @@ select option {
 .results .result-item.highlight {
     background: rgba(94, 106, 210, 0.15);
     border-color: rgba(94, 106, 210, 0.4);
-    margin-bottom: 20px;
-    padding: 16px;
+    padding: 14px 16px;
     font-size: 14px;
     font-weight: 500;
-    justify-content: flex-start;
-    gap: 8px;
 }
 
 .results .result-item a {
     color: var(--accent-color);
     text-decoration: none;
     transition: var(--transition);
+    display: inline;
+    word-break: break-all;
 }
 
 .results .result-item a:hover {
@@ -443,7 +475,7 @@ select option {
 
 .progress-bar {
     height: 4px;
-    background: rgba(255,255,255,0.1);
+    background: rgba(255, 255, 255, 0.1);
     border-radius: 2px;
     overflow: hidden;
 }
@@ -480,7 +512,7 @@ select option {
     .container {
         padding: 24px;
     }
-    
+
     header h1 {
         font-size: 20px;
     }

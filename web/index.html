@@ -41,7 +41,6 @@
             <div class="form-group" id="urlGroup">
                 <label for="urls">URLs (comma-separated)</label>
                 <input type="text" id="urls" name="urls" placeholder="https://example.com/image.jpg, https://example.com/image2.png">
-                <p class="hint">Only supported for catbox.moe provider</p>
             </div>
 
             <div class="form-group">
@@ -56,11 +55,10 @@
 
             <div class="form-group checkbox-group" id="createCollectionGroup">
                 <label class="checkbox-label">
-                    <input type="checkbox" id="createCollection" name="createCollection">
+                    <input type="checkbox" id="createCollection" name="createCollection" checked>
                     <span class="checkmark"></span>
                     Create collection
                 </label>
-                <p class="hint">Only supported for sxcu.net provider</p>
             </div>
 
             <div id="sxcuOptions" class="hidden">
@@ -79,13 +77,11 @@
                     <span class="checkmark"></span>
                     Anonymous
                 </label>
-                <p class="hint">Only supported for imgchest.com provider</p>
             </div>
 
             <div class="form-group" id="postIdGroup">
                 <label for="postId">Post ID (to add to existing)</label>
                 <input type="text" id="postId" name="postId" placeholder="e.g., xxxxxxxx">
-                <p class="hint">Only for imgchest.com - add files to existing post</p>
             </div>
 
             <button type="submit" id="uploadBtn" class="btn btn-primary">

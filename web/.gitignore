@@ -3,4 +3,5 @@
 .wrangler/
 *temp/
 catbox_*_rate_limit.json
+nul
 dist/
