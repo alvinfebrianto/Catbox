@@ -120,6 +120,7 @@ header p {
 
 /* Inputs & Selects */
 input[type="text"],
+input[type="password"],
 select {
     width: 100%;
     background: rgba(0, 0, 0, 0.2);
@@ -133,12 +134,14 @@ select {
 }
 
 input[type="text"]:hover,
+input[type="password"]:hover,
 select:hover {
     border-color: var(--border-hover);
     background: rgba(255, 255, 255, 0.02);
 }
 
 input[type="text"]:focus,
+input[type="password"]:focus,
 select:focus {
     outline: none;
     border-color: var(--accent-color);
@@ -166,6 +169,41 @@ select option {
     font-size: 12px;
     color: var(--text-tertiary);
     margin-top: 6px;
+}
+
+.hint a {
+    color: var(--accent-color);
+    text-decoration: none;
+}
+
+.hint a:hover {
+    text-decoration: underline;
+}
+
+/* API Key Input Wrapper */
+.api-key-input-wrapper {
+    display: flex;
+    gap: 8px;
+}
+
+.api-key-input-wrapper input {
+    flex: 1;
+}
+
+.toggle-visibility-btn {
+    padding: 8px 12px;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 14px;
+    transition: var(--transition);
+    color: var(--text-secondary);
+}
+
+.toggle-visibility-btn:hover {
+    border-color: var(--border-hover);
+    background: rgba(255, 255, 255, 0.05);
 }
 
 /* File Upload Area */

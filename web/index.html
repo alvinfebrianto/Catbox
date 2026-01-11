@@ -79,6 +79,15 @@
                 </label>
             </div>
 
+            <div class="form-group hidden" id="imgchestApiKeyGroup">
+                <label for="imgchestApiKey">ImgChest API Token (optional)</label>
+                <div class="api-key-input-wrapper">
+                    <input type="password" id="imgchestApiKey" name="imgchestApiKey" placeholder="Your personal access token">
+                    <button type="button" id="toggleApiKeyVisibility" class="toggle-visibility-btn" title="Toggle visibility">👁</button>
+                </div>
+                <p class="hint">Leave empty to use default. <a href="https://imgchest.com/docs/api/1.0/general/authorization" target="_blank">Get your token</a></p>
+            </div>
+
             <div class="form-group checkbox-group hidden" id="createAlbumGroup">
                 <label class="checkbox-label">
                     <input type="checkbox" id="createAlbum" name="createAlbum" checked>

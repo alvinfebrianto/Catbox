@@ -27,8 +27,16 @@ CatboxUploader.prototype.init = function() {
     this.titleInput = document.getElementById('title');
     this.postIdInput = document.getElementById('postId');
     this.fileTypesHint = document.getElementById('fileTypesHint');
+    this.imgchestApiKeyGroup = document.getElementById('imgchestApiKeyGroup');
+    this.imgchestApiKeyInput = document.getElementById('imgchestApiKey');
+    this.toggleApiKeyBtn = document.getElementById('toggleApiKeyVisibility');
 
     this.providerSelect.value = this.provider;
+
+    var savedApiKey = localStorage.getItem('imgchest_api_key');
+    if (savedApiKey && this.imgchestApiKeyInput) {
+        this.imgchestApiKeyInput.value = savedApiKey;
+    }
 
     this.bindEvents();
     this.updateUI();
@@ -60,6 +68,30 @@ CatboxUploader.prototype.bindEvents = function() {
         createCollectionCheckbox.addEventListener('change', function() {
             if (self.sxcuOptions) {
                 self.sxcuOptions.classList.toggle('hidden', !this.checked);
+            }
+        });
+    }
+
+    if (this.imgchestApiKeyInput) {
+        this.imgchestApiKeyInput.addEventListener('change', function() {
+            var value = self.imgchestApiKeyInput.value.trim();
+            if (value) {
+                localStorage.setItem('imgchest_api_key', value);
+            } else {
+                localStorage.removeItem('imgchest_api_key');
+            }
+        });
+    }
+
+    if (this.toggleApiKeyBtn) {
+        this.toggleApiKeyBtn.addEventListener('click', function() {
+            var input = self.imgchestApiKeyInput;
+            if (input.type === 'password') {
+                input.type = 'text';
+                self.toggleApiKeyBtn.textContent = '🙈';
+            } else {
+                input.type = 'password';
+                self.toggleApiKeyBtn.textContent = '👁';
             }
         });
     }
@@ -178,6 +210,9 @@ CatboxUploader.prototype.updateUI = function() {
     }
 
     this.anonymousGroup.classList.toggle('hidden', !isImgchest);
+    if (this.imgchestApiKeyGroup) {
+        this.imgchestApiKeyGroup.classList.toggle('hidden', !isImgchest);
+    }
     this.updatePostIdVisibility();
     this.updateAnonymousWarning();
 
@@ -720,10 +755,20 @@ CatboxUploader.prototype.uploadImgchestBatch = function(postId, files, results, 
         ? apiBaseUrl + '/upload/imgchest/post/' + postId + '/add'
         : apiBaseUrl + '/upload/imgchest/post';
 
-    fetch(url, {
+    var fetchOptions = {
         method: 'POST',
         body: formData
-    })
+    };
+
+    var customToken = self.imgchestApiKeyInput ? self.imgchestApiKeyInput.value.trim() : '';
+    console.log('[uploadImgchestBatch] imgchestApiKeyInput element:', self.imgchestApiKeyInput);
+    console.log('[uploadImgchestBatch] customToken:', customToken ? 'SET (length: ' + customToken.length + ')' : 'EMPTY');
+    if (customToken) {
+        fetchOptions.headers = { 'Authorization': 'Bearer ' + customToken };
+        console.log('[uploadImgchestBatch] Authorization header added');
+    }
+
+    fetch(url, fetchOptions)
     .then(function(response) {
         return response.text();
     })
@@ -792,10 +837,19 @@ CatboxUploader.prototype.uploadImgchestProgressiveAddToPost = function(postId, f
 
         var url = apiBaseUrl + '/upload/imgchest/post/' + postId + '/add';
 
-        fetch(url, {
+        var fetchOptions = {
             method: 'POST',
             body: formData
-        })
+        };
+
+        var customToken = self.imgchestApiKeyInput ? self.imgchestApiKeyInput.value.trim() : '';
+        console.log('[uploadImgchestProgressiveAddToPost] customToken:', customToken ? 'SET (length: ' + customToken.length + ')' : 'EMPTY');
+        if (customToken) {
+            fetchOptions.headers = { 'Authorization': 'Bearer ' + customToken };
+            console.log('[uploadImgchestProgressiveAddToPost] Authorization header added');
+        }
+
+        fetch(url, fetchOptions)
         .then(function(response) {
             return response.text();
         })
@@ -877,10 +931,19 @@ CatboxUploader.prototype.uploadImgchestProgressive = function(files, results, to
             ? apiBaseUrl + '/upload/imgchest/post'
             : apiBaseUrl + '/upload/imgchest/post/' + currentPostId + '/add';
 
-        fetch(url, {
+        var fetchOptions = {
             method: 'POST',
             body: formData
-        })
+        };
+
+        var customToken = self.imgchestApiKeyInput ? self.imgchestApiKeyInput.value.trim() : '';
+        console.log('[uploadImgchestProgressive] customToken:', customToken ? 'SET (length: ' + customToken.length + ')' : 'EMPTY');
+        if (customToken) {
+            fetchOptions.headers = { 'Authorization': 'Bearer ' + customToken };
+            console.log('[uploadImgchestProgressive] Authorization header added');
+        }
+
+        fetch(url, fetchOptions)
         .then(function(response) {
             return response.text();
         })
