@@ -1,5 +1,5 @@
 import { test, expect, describe, mock, afterEach } from "bun:test";
-import workerDefault from "./worker.js";
+import workerDefault from "../worker.js";
 
 const originalFetch = globalThis.fetch;
 

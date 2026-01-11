@@ -14,7 +14,7 @@ import {
   handleImgchestPost,
   handleImgchestAdd,
   MAX_IMGCHEST_IMAGES_PER_REQUEST,
-} from "./server.js";
+} from "../server.js";
 
 const ORIGINAL_TOKEN_FILE = "C:\\Users\\lenovo\\AppData\\Roaming\\catbox_web_imgchest_token.txt";
 const originalFetch = globalThis.fetch;

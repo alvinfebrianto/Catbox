@@ -2,12 +2,7 @@ import { serve } from "bun";
 import { writeFileSync, unlinkSync, mkdirSync, existsSync, readFileSync } from "fs";
 
 const PORT = 3000;
-const TEMP_DIR = "./temp_uploads";
-let IMGCHEST_TOKEN_FILE = "C:\\Users\\lenovo\\AppData\\Roaming\\catbox_web_imgchest_token.txt";
-
-function setImgchestTokenFile(path) {
-  IMGCHEST_TOKEN_FILE = path;
-}
+const TEMP_DIR = "C:\\Users\\lenovo\\AppData\\Local\\Temp";
 
 if (import.meta.main) {
   if (!existsSync(TEMP_DIR)) {
@@ -16,14 +11,7 @@ if (import.meta.main) {
 }
 
 function getImgchestToken() {
-  const envToken = process.env.IMGCHEST_API_TOKEN;
-  if (envToken) {
-    return envToken;
-  }
-  if (existsSync(IMGCHEST_TOKEN_FILE)) {
-    return readFileSync(IMGCHEST_TOKEN_FILE, "utf-8").trim();
-  }
-  return null;
+  return process.env.IMGCHEST_API_TOKEN || null;
 }
 
 function getRateLimitFile(provider) {
@@ -103,7 +91,7 @@ async function handleSxcuCollections(req) {
   const limit = response.headers.get("X-RateLimit-Limit");
   const remaining = response.headers.get("X-RateLimit-Remaining");
   const reset = response.headers.get("X-RateLimit-Reset");
-  
+
   if (limit && remaining !== null) {
     setRateLimit("sxcu", {
       remaining: parseInt(remaining),
@@ -116,25 +104,25 @@ async function handleSxcuCollections(req) {
   if (response.status === 429) {
     const resetAfter = response.headers.get("X-RateLimit-Reset-After");
     let waitSeconds = resetAfter ? parseFloat(resetAfter) + 1 : 61;
-    
+
     console.log(`Rate limited. Waiting ${waitSeconds}s before retry...`);
     await new Promise(resolve => setTimeout(resolve, waitSeconds * 1000));
-    
+
     clearRateLimit("sxcu");
-    
+
     console.log("Retrying collection creation after rate limit...");
     const retryResponse = await fetch("https://sxcu.net/api/collections/create", {
       method: "POST",
       body: formData,
       headers: { "User-Agent": "sxcuUploader/1.0" },
     });
-    
+
     const retryJson = await retryResponse.json();
-    
+
     const retryLimit = retryResponse.headers.get("X-RateLimit-Limit");
     const retryRemaining = retryResponse.headers.get("X-RateLimit-Remaining");
     const retryReset = retryResponse.headers.get("X-RateLimit-Reset");
-    
+
     if (retryLimit && retryRemaining !== null) {
       setRateLimit("sxcu", {
         remaining: parseInt(retryRemaining),
@@ -143,7 +131,7 @@ async function handleSxcuCollections(req) {
         windowStart: Math.floor(Date.now() / 1000),
       });
     }
-    
+
     return new Response(JSON.stringify(retryJson), {
       headers: { "Content-Type": "application/json" },
       status: retryResponse.ok ? 200 : retryResponse.status,
@@ -160,7 +148,7 @@ async function handleSxcuFiles(req) {
   await waitForRateLimitAsync("sxcu", 1);
 
   const formData = await req.formData();
-  
+
   console.log("SXCU File Upload Request Data:");
   for (const [key, value] of formData.entries()) {
     if (key === 'file') {
@@ -178,7 +166,7 @@ async function handleSxcuFiles(req) {
 
   const text = await response.text();
   console.log("SXCU File Upload Response:", text);
-  
+
   let json = {};
 
   try {
@@ -190,7 +178,7 @@ async function handleSxcuFiles(req) {
   const limit = response.headers.get("X-RateLimit-Limit");
   const remaining = response.headers.get("X-RateLimit-Remaining");
   const reset = response.headers.get("X-RateLimit-Reset");
-  
+
   if (limit && remaining !== null) {
     setRateLimit("sxcu", {
       remaining: parseInt(remaining),
@@ -203,30 +191,30 @@ async function handleSxcuFiles(req) {
   if (response.status === 429) {
     const resetAfter = response.headers.get("X-RateLimit-Reset-After");
     let waitSeconds = resetAfter ? parseFloat(resetAfter) + 1 : 61;
-    
+
     console.log(`Rate limited. Waiting ${waitSeconds}s before retry...`);
     await new Promise(resolve => setTimeout(resolve, waitSeconds * 1000));
-    
+
     clearRateLimit("sxcu");
-    
+
     console.log("Retrying upload after rate limit...");
     const retryResponse = await fetch("https://sxcu.net/api/files/create", {
       method: "POST",
       body: formData,
       headers: { "User-Agent": "sxcuUploader/1.0" },
     });
-    
+
     const retryText = await retryResponse.text();
     try {
       json = JSON.parse(retryText);
     } catch {
       json = { error: retryText };
     }
-    
+
     const retryLimit = retryResponse.headers.get("X-RateLimit-Limit");
     const retryRemaining = retryResponse.headers.get("X-RateLimit-Remaining");
     const retryReset = retryResponse.headers.get("X-RateLimit-Reset");
-    
+
     if (retryLimit && retryRemaining !== null) {
       setRateLimit("sxcu", {
         remaining: parseInt(retryRemaining),
@@ -235,7 +223,7 @@ async function handleSxcuFiles(req) {
         windowStart: Math.floor(Date.now() / 1000),
       });
     }
-    
+
     return new Response(JSON.stringify(json), {
       headers: { "Content-Type": "application/json" },
       status: retryResponse.ok ? 200 : retryResponse.status,
@@ -255,7 +243,7 @@ async function handleImgchestPost(req) {
 
   const token = getImgchestToken();
   if (!token) {
-    return new Response(JSON.stringify({ error: "Imgchest API token not found. Set IMGCHEST_API_TOKEN environment variable or create catbox_imgchest_token.txt" }), {
+    return new Response(JSON.stringify({ error: "Imgchest API token not found. Set IMGCHEST_API_TOKEN environment variable in .env file" }), {
       headers: { "Content-Type": "application/json" },
       status: 401,
     });
@@ -460,18 +448,18 @@ async function handleImgchestAdd(req) {
 async function waitForRateLimitAsync(provider, cost = 1) {
   const file = getRateLimitFile(provider);
   const now = Math.floor(Date.now() / 1000);
-  
+
   if (existsSync(file)) {
     try {
       const data = JSON.parse(readFileSync(file, "utf-8"));
-      
+
       const windowElapsed = now - data.windowStart;
       if (windowElapsed >= 60) {
         clearRateLimit(provider);
         console.log(`Rate limit window reset for ${provider}. Proceeding.`);
         return;
       }
-      
+
       if ((data.remaining - cost) < 0) {
         const waitSeconds = Math.max(60 - windowElapsed + 1, 1);
         console.log(`Rate limit exhausted (${data.remaining}/${data.limit} remaining). Waiting ${waitSeconds}s...`);
@@ -535,7 +523,6 @@ if (import.meta.main) {
 
 export {
   getImgchestToken,
-  setImgchestTokenFile,
   getRateLimitFile,
   getRateLimit,
   setRateLimit,
