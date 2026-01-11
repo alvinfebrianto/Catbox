@@ -455,6 +455,18 @@ select option {
     font-weight: 500;
 }
 
+/* Anonymous limit warning */
+.anonymous-limit-warning {
+    margin-top: 10px;
+    padding: 10px 14px;
+    background: rgba(251, 191, 36, 0.15);
+    border: 1px solid rgba(251, 191, 36, 0.4);
+    border-radius: var(--radius-sm);
+    color: #fbbf24;
+    font-size: 13px;
+    font-weight: 500;
+}
+
 .results .result-item a {
     color: var(--accent-color);
     text-decoration: none;

@@ -164,6 +164,11 @@ CatboxUploader.prototype.updateUI = function() {
     this.anonymousGroup.classList.toggle('hidden', !isImgchest);
     this.postIdGroup.classList.toggle('hidden', !isImgchest);
 
+    var createAlbumGroup = document.getElementById('createAlbumGroup');
+    if (createAlbumGroup) {
+        createAlbumGroup.classList.toggle('hidden', !isCatbox);
+    }
+
     var allowedTypes = [
         '.png', '.gif', '.jpeg', '.jpg', '.ico', '.bmp',
         '.tiff', '.tif', '.webm', '.webp'
@@ -431,9 +436,16 @@ CatboxUploader.prototype.uploadToCatbox = function(results, urls) {
         }
     };
 
+    var shouldCreateAlbum = document.getElementById('createAlbum').checked;
+
     var processNext = function() {
         if (completedItems >= self.files.length + urls.length) {
-            createAlbum();
+            if (shouldCreateAlbum) {
+                createAlbum();
+            } else {
+                self.updateProgress(100, 'Done!');
+                self.displayResults(results, totalItems);
+            }
             return;
         }
 
@@ -893,11 +905,11 @@ CatboxUploader.prototype.displayResults = function(results, totalFiles) {
 
             if (result.type === 'success') {
                 if (result.isAlbum) {
-                    item.innerHTML = 'Album URL: <a href="' + result.url + '" target="_blank">' + result.url + '</a>';
+                    item.innerHTML = 'Album: <a href="' + result.url + '" target="_blank">' + result.url + '</a>';
                 } else if (result.isCollection) {
                     item.innerHTML = 'Collection: <a href="' + result.url + '" target="_blank">' + result.url + '</a>';
                 } else if (result.isPost) {
-                    item.innerHTML = 'Post URL: <a href="' + result.url + '" target="_blank">' + result.url + '</a>';
+                    item.innerHTML = 'Post: <a href="' + result.url + '" target="_blank">' + result.url + '</a>';
                 } else {
                     item.innerHTML = '<a href="' + result.url + '" target="_blank">' + result.url + '</a>';
                 }
@@ -932,6 +944,12 @@ CatboxUploader.prototype.displayResults = function(results, totalFiles) {
     for (var j = 0; j < newItems.length; j++) {
         this.resultsContent.appendChild(newItems[j]);
     }
+
+    // Auto-scroll to show results
+    var self = this;
+    setTimeout(function() {
+        self.resultsDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
 };
 
 CatboxUploader.prototype.showError = function(message) {
