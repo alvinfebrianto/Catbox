@@ -1,6 +1,6 @@
 :root {
     --bg-body: #08090a;
-    --bg-surface: #141519; /* Slightly lighter for card */
+    --bg-surface: #141519;
     --bg-surface-hover: #1a1b20;
     --border-color: rgba(255, 255, 255, 0.08);
     --border-hover: rgba(255, 255, 255, 0.15);

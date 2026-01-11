@@ -161,7 +161,6 @@ async function handleSxcuFiles(req) {
 
   const formData = await req.formData();
   
-  // Log form data for debugging
   console.log("SXCU File Upload Request Data:");
   for (const [key, value] of formData.entries()) {
     if (key === 'file') {
@@ -322,7 +321,6 @@ async function handleImgchestPost(req) {
 
     const text = await response.text();
 
-    // Check if response is HTML (error page)
     if (text.trim().startsWith("<")) {
       return new Response(JSON.stringify({ error: "Imgchest API error", details: "Unauthorized or API error", chunk: i + 1 }), {
         headers: { "Content-Type": "application/json" },
@@ -417,7 +415,6 @@ async function handleImgchestAdd(req) {
 
     const text = await response.text();
 
-    // Check if response is HTML (error page)
     if (text.trim().startsWith("<")) {
       return new Response(JSON.stringify({ error: "Imgchest API error", details: "Unauthorized or API error", chunk: i + 1 }), {
         headers: { "Content-Type": "application/json" },
@@ -496,7 +493,6 @@ if (import.meta.main) {
       const method = req.method;
       const path = url.pathname;
 
-      // API routes
       if (method === "POST" && path === "/upload/catbox") {
         return handleCatboxUpload(req);
       }
@@ -517,7 +513,6 @@ if (import.meta.main) {
         return handleImgchestAdd(req);
       }
 
-      // Serve static files
       const filePath = path === "/" ? "./index.html" : "." + path;
       if (existsSync(filePath)) {
         const file = Bun.file(filePath);

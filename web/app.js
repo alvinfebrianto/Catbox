@@ -690,8 +690,10 @@ CatboxUploader.prototype.uploadToImgchest = function(results) {
         filesToUpload = filesToUpload.slice(0, 20);
     }
 
-    if (anonymous || postId) {
+    if (anonymous) {
         this.uploadImgchestBatch(postId, filesToUpload, results, totalFiles, anonymous);
+    } else if (postId) {
+        this.uploadImgchestProgressiveAddToPost(postId, filesToUpload, results, totalFiles);
     } else {
         this.uploadImgchestProgressive(filesToUpload, results, totalFiles, title);
     }
@@ -767,6 +769,82 @@ CatboxUploader.prototype.uploadImgchestBatch = function(postId, files, results, 
         self.updateProgress(100, 'Done!');
         self.displayResults(results, totalFiles);
     });
+};
+
+CatboxUploader.prototype.uploadImgchestProgressiveAddToPost = function(postId, files, results, totalFiles) {
+    var self = this;
+    var apiBaseUrl = self.apiBaseUrl;
+    var completedFiles = 0;
+    var postResultAdded = false;
+
+    var uploadNextFile = function(index) {
+        if (index >= files.length) {
+            self.updateProgress(100, 'Done!');
+            self.displayResults(results, totalFiles);
+            return;
+        }
+
+        var file = files[index];
+        self.updateProgress((index / files.length) * 100, 'Adding ' + file.name + ' to post...');
+
+        var formData = new FormData();
+        formData.append('images[]', file);
+
+        var url = apiBaseUrl + '/upload/imgchest/post/' + postId + '/add';
+
+        fetch(url, {
+            method: 'POST',
+            body: formData
+        })
+        .then(function(response) {
+            return response.text();
+        })
+        .then(function(text) {
+            try {
+                var data = JSON.parse(text);
+                if (data.error) {
+                    var errorMsg = data.error;
+                    if (data.details) {
+                        errorMsg += ': ' + (typeof data.details === 'object' ? JSON.stringify(data.details) : data.details);
+                    }
+                    throw new Error(errorMsg);
+                }
+
+                if (!postResultAdded) {
+                    var postResult = { type: 'success', url: 'https://imgchest.com/p/' + data.data.id, isPost: true };
+                    results.push(postResult);
+                    self.addIncrementalResult(postResult, results.length - 1);
+                    postResultAdded = true;
+                }
+
+                var newImages = data.data.images.slice(-1);
+                for (var i = 0; i < newImages.length; i++) {
+                    var imgResult = { type: 'success', url: newImages[i].link };
+                    results.push(imgResult);
+                    self.addIncrementalResult(imgResult, results.length - 1);
+                }
+
+                completedFiles++;
+                self.updateProgress((completedFiles / files.length) * 100, 'Added ' + completedFiles + ' of ' + files.length);
+                uploadNextFile(index + 1);
+            } catch (e) {
+                var errResult = { type: 'error', message: 'Failed to add ' + file.name + ': ' + e.message };
+                results.push(errResult);
+                self.addIncrementalResult(errResult, results.length - 1);
+                completedFiles++;
+                uploadNextFile(index + 1);
+            }
+        })
+        .catch(function(error) {
+            var errResult = { type: 'error', message: 'Failed to add ' + file.name + ': ' + error.message };
+            results.push(errResult);
+            self.addIncrementalResult(errResult, results.length - 1);
+            completedFiles++;
+            uploadNextFile(index + 1);
+        });
+    };
+
+    uploadNextFile(0);
 };
 
 CatboxUploader.prototype.uploadImgchestProgressive = function(files, results, totalFiles, title) {
@@ -900,7 +978,6 @@ CatboxUploader.prototype.addIncrementalResult = function(result, index) {
         item.textContent = result.message;
     }
 
-    // Determine insertion point
     var insertAfterSummary = false;
     if (result.isAlbum || result.isCollection || result.isPost) {
         insertAfterSummary = true;
@@ -921,8 +998,6 @@ CatboxUploader.prototype.addIncrementalResult = function(result, index) {
         }
     } else {
         if (existingItems.length > 0) {
-             // Find the last non-highlight item or just append if we don't care about sorting normal items strictly
-             // But normal items should appear after highlights
              this.resultsContent.appendChild(item);
         } else {
              this.resultsContent.appendChild(item);
@@ -983,7 +1058,6 @@ CatboxUploader.prototype.displayResults = function(results, totalFiles) {
 
     var newItems = [];
 
-    // Sort logic: Special items first, then others
     var sortedIndices = [];
     var specialIndices = [];
     var normalIndices = [];
@@ -1028,31 +1102,20 @@ CatboxUploader.prototype.displayResults = function(results, totalFiles) {
 
             newItems.push(item);
         } else {
-             // If item exists, ensure it has the highlight class if needed (fixes race conditions)
              if (result.isAlbum || result.isCollection || result.isPost) {
                  if (!existingItem.classList.contains('highlight')) {
                      existingItem.classList.add('highlight');
                  }
              }
-             // We might need to re-order existing items if they are not in the correct visual order
-             // But for now, we assume addIncrementalResult handled it or we just append new ones.
-             // Ideally, we should detach and re-append in order, but that might be expensive.
-             // Let's just append new items for now, assuming incremental updates placed them roughly correctly
-             // OR we can just clear and re-render everything if order is critical.
-             // Given the user wants "distinct and at top", maybe re-ordering is safer.
-             // But existingItem check prevents re-creation.
 
-             // Let's collect ALL items (existing + new) in correct order and append them.
              newItems.push(existingItem);
         }
     }
 
-    // Re-append all items in the sorted order
     for (var j = 0; j < newItems.length; j++) {
         this.resultsContent.appendChild(newItems[j]);
     }
 
-    // Auto-scroll to show results
     var self = this;
     setTimeout(function() {
         self.resultsDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
