@@ -50,21 +50,8 @@ CatboxUploader.prototype.bindEvents = function() {
     var anonymousCheckbox = document.getElementById('anonymous');
     if (anonymousCheckbox) {
         anonymousCheckbox.addEventListener('change', function() {
-            if (this.checked && self.files.length > 20) {
-                var warning = document.createElement('div');
-                warning.className = 'result-item warning anonymous-warning';
-                warning.style.marginTop = '10px';
-                warning.textContent = 'Warning: Anonymous posts are limited to 20 images. Only the first 20 files will be uploaded.';
-                var existingWarning = self.fileList.parentNode.querySelector('.anonymous-warning');
-                if (!existingWarning) {
-                    self.fileList.parentNode.insertBefore(warning, self.fileList.nextSibling);
-                }
-            } else {
-                var existingWarning = self.fileList.parentNode.querySelector('.anonymous-warning');
-                if (existingWarning) {
-                    existingWarning.remove();
-                }
-            }
+            self.updateAnonymousWarning();
+            self.updatePostIdVisibility();
         });
     }
 
@@ -109,6 +96,7 @@ CatboxUploader.prototype.bindEvents = function() {
             }
 
             self.renderFileList();
+            self.updateAnonymousWarning();
 
             if (self.files.length > 0 && !self.titleInput.value) {
                 var firstFile = self.files[0];
@@ -148,6 +136,34 @@ CatboxUploader.prototype.bindEvents = function() {
     });
 };
 
+CatboxUploader.prototype.updateAnonymousWarning = function() {
+    var anonymousCheckbox = document.getElementById('anonymous');
+    var existingWarning = this.fileList.parentNode.querySelector('.anonymous-limit-warning');
+    
+    if (anonymousCheckbox && anonymousCheckbox.checked && this.files.length > 20) {
+        if (!existingWarning) {
+            var warning = document.createElement('div');
+            warning.className = 'anonymous-limit-warning';
+            warning.textContent = '⚠ Anonymous posts are limited to 20 images. Only the first 20 files will be uploaded.';
+            this.fileList.parentNode.insertBefore(warning, this.fileList.nextSibling);
+        }
+    } else {
+        if (existingWarning) {
+            existingWarning.remove();
+        }
+    }
+};
+
+CatboxUploader.prototype.updatePostIdVisibility = function() {
+    var anonymousCheckbox = document.getElementById('anonymous');
+    var isImgchest = this.provider === 'imgchest';
+    
+    if (this.postIdGroup) {
+        var shouldHide = !isImgchest || (anonymousCheckbox && anonymousCheckbox.checked);
+        this.postIdGroup.classList.toggle('hidden', shouldHide);
+    }
+};
+
 CatboxUploader.prototype.updateUI = function() {
     var isSxcu = this.provider === 'sxcu';
     var isImgchest = this.provider === 'imgchest';
@@ -162,7 +178,8 @@ CatboxUploader.prototype.updateUI = function() {
     }
 
     this.anonymousGroup.classList.toggle('hidden', !isImgchest);
-    this.postIdGroup.classList.toggle('hidden', !isImgchest);
+    this.updatePostIdVisibility();
+    this.updateAnonymousWarning();
 
     var createAlbumGroup = document.getElementById('createAlbumGroup');
     if (createAlbumGroup) {
@@ -210,26 +227,7 @@ CatboxUploader.prototype.addFiles = function(fileList) {
     }
 
     this.renderFileList();
-
-    // Show warning for anonymous post limit
-    var anonymousCheckbox = document.getElementById('anonymous');
-    if (anonymousCheckbox && anonymousCheckbox.checked && this.files.length > 20) {
-        var warning = document.createElement('div');
-        warning.className = 'result-item warning';
-        warning.style.marginTop = '10px';
-        warning.textContent = 'Warning: Anonymous posts are limited to 20 images. Only the first 20 files will be uploaded.';
-        var existingWarning = this.fileList.parentNode.querySelector('.anonymous-warning');
-        if (existingWarning) {
-            existingWarning.remove();
-        }
-        warning.className += ' anonymous-warning';
-        this.fileList.parentNode.insertBefore(warning, this.fileList.nextSibling);
-    } else {
-        var existingWarning = this.fileList.parentNode.querySelector('.anonymous-warning');
-        if (existingWarning) {
-            existingWarning.remove();
-        }
-    }
+    this.updateAnonymousWarning();
 
     if (this.files.length > 0 && !this.titleInput.value) {
         var firstFile = this.files[0];
@@ -686,18 +684,22 @@ CatboxUploader.prototype.uploadToImgchest = function(results) {
     }
 
     var totalFiles = this.files.length;
+    var filesToUpload = this.files.slice();
 
-    if (postId) {
-        this.uploadImgchestPost(postId, this.files, results, totalFiles);
+    if (anonymous) {
+        filesToUpload = filesToUpload.slice(0, 20);
+    }
+
+    if (anonymous || postId) {
+        this.uploadImgchestBatch(postId, filesToUpload, results, totalFiles, anonymous);
     } else {
-        this.uploadImgchestPost(null, this.files, results, totalFiles);
+        this.uploadImgchestProgressive(filesToUpload, results, totalFiles, title);
     }
 };
 
-CatboxUploader.prototype.uploadImgchestPost = function(postId, files, results, totalFiles) {
+CatboxUploader.prototype.uploadImgchestBatch = function(postId, files, results, totalFiles, anonymous) {
     var self = this;
     var apiBaseUrl = self.apiBaseUrl;
-    var anonymous = document.getElementById('anonymous').checked;
     var title = this.titleInput.value;
 
     this.updateProgress(0, postId ? 'Adding images...' : 'Creating post...');
@@ -734,7 +736,9 @@ CatboxUploader.prototype.uploadImgchestPost = function(postId, files, results, t
                 throw new Error(errorMsg);
             }
 
-            results.push({ type: 'success', url: 'https://imgchest.com/p/' + data.data.id, isPost: true });
+            var postResult = { type: 'success', url: 'https://imgchest.com/p/' + data.data.id, isPost: true };
+            results.push(postResult);
+            self.addIncrementalResult(postResult, results.length - 1);
 
             var newImages;
             if (postId) {
@@ -745,7 +749,9 @@ CatboxUploader.prototype.uploadImgchestPost = function(postId, files, results, t
             }
 
             for (var i = 0; i < newImages.length; i++) {
-                results.push({ type: 'success', url: newImages[i].link });
+                var imgResult = { type: 'success', url: newImages[i].link };
+                results.push(imgResult);
+                self.addIncrementalResult(imgResult, results.length - 1);
             }
 
             self.updateProgress(100, 'Done!');
@@ -761,6 +767,107 @@ CatboxUploader.prototype.uploadImgchestPost = function(postId, files, results, t
         self.updateProgress(100, 'Done!');
         self.displayResults(results, totalFiles);
     });
+};
+
+CatboxUploader.prototype.uploadImgchestProgressive = function(files, results, totalFiles, title) {
+    var self = this;
+    var apiBaseUrl = self.apiBaseUrl;
+    var currentPostId = null;
+    var completedFiles = 0;
+
+    var uploadNextFile = function(index) {
+        if (index >= files.length) {
+            self.updateProgress(100, 'Done!');
+            self.displayResults(results, totalFiles);
+            return;
+        }
+
+        var file = files[index];
+        var isFirst = index === 0;
+        self.updateProgress((index / files.length) * 100, 'Uploading ' + file.name + '...');
+
+        var formData = new FormData();
+        formData.append('images[]', file);
+
+        if (isFirst) {
+            if (title) formData.append('title', title);
+            formData.append('privacy', 'hidden');
+            formData.append('nsfw', 'true');
+        }
+
+        var url = isFirst
+            ? apiBaseUrl + '/upload/imgchest/post'
+            : apiBaseUrl + '/upload/imgchest/post/' + currentPostId + '/add';
+
+        fetch(url, {
+            method: 'POST',
+            body: formData
+        })
+        .then(function(response) {
+            return response.text();
+        })
+        .then(function(text) {
+            try {
+                var data = JSON.parse(text);
+                if (data.error) {
+                    var errorMsg = data.error;
+                    if (data.details) {
+                        errorMsg += ': ' + (typeof data.details === 'object' ? JSON.stringify(data.details) : data.details);
+                    }
+                    throw new Error(errorMsg);
+                }
+
+                if (isFirst) {
+                    currentPostId = data.data.id;
+                    var postResult = { type: 'success', url: 'https://imgchest.com/p/' + data.data.id, isPost: true };
+                    results.push(postResult);
+                    self.addIncrementalResult(postResult, results.length - 1);
+                }
+
+                var newImages = data.data.images;
+                if (!isFirst) {
+                    newImages = newImages.slice(-1);
+                }
+
+                for (var i = 0; i < newImages.length; i++) {
+                    var imgResult = { type: 'success', url: newImages[i].link };
+                    results.push(imgResult);
+                    self.addIncrementalResult(imgResult, results.length - 1);
+                }
+
+                completedFiles++;
+                self.updateProgress((completedFiles / files.length) * 100, 'Uploaded ' + completedFiles + ' of ' + files.length);
+                uploadNextFile(index + 1);
+            } catch (e) {
+                var errResult = { type: 'error', message: 'Failed to upload ' + file.name + ': ' + e.message };
+                results.push(errResult);
+                self.addIncrementalResult(errResult, results.length - 1);
+                completedFiles++;
+
+                if (currentPostId || index > 0) {
+                    uploadNextFile(index + 1);
+                } else {
+                    self.updateProgress(100, 'Done!');
+                    self.displayResults(results, totalFiles);
+                }
+            }
+        })
+        .catch(function(error) {
+            var errResult = { type: 'error', message: 'Failed to upload ' + file.name + ': ' + error.message };
+            results.push(errResult);
+            self.addIncrementalResult(errResult, results.length - 1);
+            completedFiles++;
+
+            if (currentPostId || index > 0) {
+                uploadNextFile(index + 1);
+            } else {
+                self.updateProgress(100, 'Done!');
+                self.displayResults(results, totalFiles);
+            }
+        });
+    };
+
+    uploadNextFile(0);
 };
 
 CatboxUploader.prototype.updateProgress = function(percent, text) {
