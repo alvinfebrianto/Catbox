@@ -294,12 +294,9 @@ async function handleSxcuFiles(request) {
 
 async function handleImgchestPost(request, env) {
   const authHeader = request.headers.get("Authorization");
-  console.log('[handleImgchestPost] Authorization header:', authHeader ? 'present' : 'missing');
   let token = authHeader && authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
-  console.log('[handleImgchestPost] Token from header:', token ? 'SET (length: ' + token.length + ')' : 'NULL');
   if (!token) {
     token = env.IMGCHEST_API_TOKEN;
-    console.log('[handleImgchestPost] Using env.IMGCHEST_API_TOKEN:', token ? 'SET' : 'NOT SET');
   }
   if (!token) {
     return new Response(JSON.stringify({ error: "Imgchest API token not configured" }), {
@@ -357,12 +354,9 @@ async function handleImgchestAdd(request, env) {
   const pathParts = url.pathname.split("/");
   const postId = pathParts[4];
   const authHeader = request.headers.get("Authorization");
-  console.log('[handleImgchestAdd] Authorization header:', authHeader ? 'present' : 'missing');
   let token = authHeader && authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
-  console.log('[handleImgchestAdd] Token from header:', token ? 'SET (length: ' + token.length + ')' : 'NULL');
   if (!token) {
     token = env.IMGCHEST_API_TOKEN;
-    console.log('[handleImgchestAdd] Using env.IMGCHEST_API_TOKEN:', token ? 'SET' : 'NOT SET');
   }
 
   if (!token) {

@@ -761,11 +761,8 @@ CatboxUploader.prototype.uploadImgchestBatch = function(postId, files, results, 
     };
 
     var customToken = self.imgchestApiKeyInput ? self.imgchestApiKeyInput.value.trim() : '';
-    console.log('[uploadImgchestBatch] imgchestApiKeyInput element:', self.imgchestApiKeyInput);
-    console.log('[uploadImgchestBatch] customToken:', customToken ? 'SET (length: ' + customToken.length + ')' : 'EMPTY');
     if (customToken) {
         fetchOptions.headers = { 'Authorization': 'Bearer ' + customToken };
-        console.log('[uploadImgchestBatch] Authorization header added');
     }
 
     fetch(url, fetchOptions)
@@ -843,10 +840,8 @@ CatboxUploader.prototype.uploadImgchestProgressiveAddToPost = function(postId, f
         };
 
         var customToken = self.imgchestApiKeyInput ? self.imgchestApiKeyInput.value.trim() : '';
-        console.log('[uploadImgchestProgressiveAddToPost] customToken:', customToken ? 'SET (length: ' + customToken.length + ')' : 'EMPTY');
         if (customToken) {
             fetchOptions.headers = { 'Authorization': 'Bearer ' + customToken };
-            console.log('[uploadImgchestProgressiveAddToPost] Authorization header added');
         }
 
         fetch(url, fetchOptions)
@@ -937,10 +932,8 @@ CatboxUploader.prototype.uploadImgchestProgressive = function(files, results, to
         };
 
         var customToken = self.imgchestApiKeyInput ? self.imgchestApiKeyInput.value.trim() : '';
-        console.log('[uploadImgchestProgressive] customToken:', customToken ? 'SET (length: ' + customToken.length + ')' : 'EMPTY');
         if (customToken) {
             fetchOptions.headers = { 'Authorization': 'Bearer ' + customToken };
-            console.log('[uploadImgchestProgressive] Authorization header added');
         }
 
         fetch(url, fetchOptions)
