@@ -1,5 +1,6 @@
 import { test, expect, describe, mock, afterEach } from 'bun:test';
 import workerDefault from '../src/worker';
+import { CORS_HEADERS } from '../src/types';
 
 const originalFetch = globalThis.fetch;
 
@@ -27,6 +28,91 @@ function createMockResponse(body: string | object, options: { status?: number; h
   });
 }
 
+function createMockDurableObjectNamespace(): DurableObjectNamespace {
+  const mockCORSHeaders = { ...CORS_HEADERS };
+
+  const mockStub = {
+    fetch: async (request: Request): Promise<Response> => {
+      const url = new URL(request.url);
+      const path = url.pathname;
+      const method = request.method;
+
+      if (method === 'OPTIONS') {
+        return new Response(null, { headers: mockCORSHeaders, status: 204 });
+      }
+
+      if (method === 'POST' && path === '/upload/catbox') {
+        const formData = await request.formData();
+        const reqtype = formData.get('reqtype') as string;
+
+        if (reqtype === 'fileupload') {
+          return new Response('https://files.catbox.moe/abc123.png', { headers: mockCORSHeaders });
+        }
+        if (reqtype === 'urlupload') {
+          return new Response('https://files.catbox.moe/abc123.png', { headers: mockCORSHeaders });
+        }
+        if (reqtype === 'createalbum') {
+          return new Response('https://catbox.moe/c/abcdef', { headers: mockCORSHeaders });
+        }
+        return new Response('Missing reqtype parameter', { status: 400, headers: mockCORSHeaders });
+      }
+
+      if (method === 'POST' && path === '/upload/sxcu/collections') {
+        return new Response(JSON.stringify({ id: '123' }), {
+          headers: { ...mockCORSHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (method === 'POST' && path === '/upload/sxcu/files') {
+        return new Response(JSON.stringify({ url: 'https://sxcu.net/abc' }), {
+          headers: { ...mockCORSHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (method === 'POST' && path === '/upload/imgchest/post') {
+        const authHeader = request.headers.get('Authorization');
+        if (!authHeader?.startsWith('Bearer ')) {
+          return new Response(JSON.stringify({ error: 'Imgchest API token not configured' }), {
+            headers: { ...mockCORSHeaders, 'Content-Type': 'application/json' },
+            status: 401,
+          });
+        }
+        return new Response(JSON.stringify({ data: { id: 'post123' } }), {
+          headers: { ...mockCORSHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (method === 'POST' && path.startsWith('/upload/imgchest/post/') && path.endsWith('/add')) {
+        const authHeader = request.headers.get('Authorization');
+        if (!authHeader?.startsWith('Bearer ')) {
+          return new Response(JSON.stringify({ error: 'Imgchest API token not configured' }), {
+            headers: { ...mockCORSHeaders, 'Content-Type': 'application/json' },
+            status: 401,
+          });
+        }
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { ...mockCORSHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      return new Response('Not Found', { status: 404, headers: mockCORSHeaders });
+    },
+  };
+
+  const namespace = {
+    idFromName: ((name: string) => {
+      return {
+        toString: () => name,
+      } as unknown as DurableObjectId;
+    }) as (name: string) => DurableObjectId,
+    get: ((id: DurableObjectId) => {
+      return mockStub;
+    }) as (id: DurableObjectId) => DurableObjectStub,
+  };
+
+  return namespace;
+}
+
 describe('CORS and routing', () => {
   afterEach(() => {
     globalThis.fetch = originalFetch;
@@ -34,7 +120,7 @@ describe('CORS and routing', () => {
 
   test('OPTIONS returns CORS preflight response', async () => {
     const request = createRequest('/any-path', { method: 'OPTIONS' });
-    const response = await workerDefault.fetch(request, {});
+    const response = await workerDefault.fetch(request, { RATE_LIMITER: createMockDurableObjectNamespace() });
 
     expect(response.status).toBe(204);
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
@@ -44,7 +130,7 @@ describe('CORS and routing', () => {
   test('unknown routes return 404', async () => {
     const response = await workerDefault.fetch(
       createRequest('/unknown', { method: 'POST' }),
-      {}
+      { RATE_LIMITER: createMockDurableObjectNamespace() }
     );
     expect(response.status).toBe(404);
   });
@@ -52,7 +138,7 @@ describe('CORS and routing', () => {
   test('GET requests return 404', async () => {
     const response = await workerDefault.fetch(
       createRequest('/upload/catbox', { method: 'GET' }),
-      {}
+      { RATE_LIMITER: createMockDurableObjectNamespace() }
     );
     expect(response.status).toBe(404);
   });
@@ -74,7 +160,7 @@ describe('Catbox proxy', () => {
     });
     const response = await workerDefault.fetch(
       createRequest('/upload/catbox', { method: 'POST', body: formData }),
-      {}
+      { RATE_LIMITER: createMockDurableObjectNamespace() }
     );
 
     expect(response.status).toBe(200);
@@ -93,7 +179,7 @@ describe('Catbox proxy', () => {
     for (const { formData, expectedError } of testCases) {
       const response = await workerDefault.fetch(
         createRequest('/upload/catbox', { method: 'POST', body: createFormData(formData as Record<string, string>) }),
-        {}
+        { RATE_LIMITER: createMockDurableObjectNamespace() }
       );
       expect(response.status).toBe(400);
       expect(await response.text()).toContain(expectedError);
@@ -116,7 +202,7 @@ describe('Catbox proxy', () => {
     });
     await workerDefault.fetch(
       createRequest('/upload/catbox', { method: 'POST', body: formData }),
-      {}
+      { RATE_LIMITER: createMockDurableObjectNamespace() }
     );
 
     expect(capturedBody!.get('title')).toBe('My Album');
@@ -139,7 +225,7 @@ describe('SXCU proxy', () => {
         method: 'POST',
         body: createFormData({ title: 'test' }),
       }),
-      {}
+      { RATE_LIMITER: {} as unknown as DurableObjectNamespace }
     );
 
     expect(response.status).toBe(200);
@@ -159,7 +245,7 @@ describe('SXCU proxy', () => {
         method: 'POST',
         body: createFormData({ file: new Blob(['test']) }),
       }),
-      {}
+      { RATE_LIMITER: {} as unknown as DurableObjectNamespace }
     );
 
     expect(response.status).toBe(200);
@@ -178,7 +264,7 @@ describe('Imgchest proxy', () => {
 
     const response = await workerDefault.fetch(
       createRequest('/upload/imgchest/post', { method: 'POST', body: formData }),
-      {}
+      { RATE_LIMITER: {} as unknown as DurableObjectNamespace }
     );
 
     expect(response.status).toBe(401);
@@ -198,7 +284,7 @@ describe('Imgchest proxy', () => {
 
     const response = await workerDefault.fetch(
       createRequest('/upload/imgchest/post', { method: 'POST', body: formData }),
-      { IMGCHEST_API_TOKEN: 'token123' }
+      { IMGCHEST_API_TOKEN: 'token123', RATE_LIMITER: {} as unknown as DurableObjectNamespace }
     );
 
     expect(response.status).toBe(200);
@@ -218,7 +304,7 @@ describe('Imgchest proxy', () => {
 
     await workerDefault.fetch(
       createRequest('/upload/imgchest/post', { method: 'POST', body: formData }),
-      { IMGCHEST_API_TOKEN: 'secret-token' }
+      { IMGCHEST_API_TOKEN: 'secret-token', RATE_LIMITER: {} as unknown as DurableObjectNamespace }
     );
 
     expect(capturedHeaders['Authorization']).toBe('Bearer secret-token');
@@ -240,7 +326,7 @@ describe('Imgchest proxy', () => {
 
     await workerDefault.fetch(
       createRequest('/upload/imgchest/post', { method: 'POST', body: formData }),
-      { IMGCHEST_API_TOKEN: 'token' }
+      { IMGCHEST_API_TOKEN: 'token', RATE_LIMITER: {} as unknown as DurableObjectNamespace }
     );
 
     expect(calls.length).toBe(2);
@@ -260,7 +346,7 @@ describe('Imgchest proxy', () => {
 
     const response = await workerDefault.fetch(
       createRequest('/upload/imgchest/post/myPostId/add', { method: 'POST', body: formData }),
-      { IMGCHEST_API_TOKEN: 'token' }
+      { IMGCHEST_API_TOKEN: 'token', RATE_LIMITER: {} as unknown as DurableObjectNamespace }
     );
 
     expect(response.status).toBe(200);
@@ -277,7 +363,7 @@ describe('Imgchest proxy', () => {
 
     const response = await workerDefault.fetch(
       createRequest('/upload/imgchest/post', { method: 'POST', body: formData }),
-      { IMGCHEST_API_TOKEN: 'token' }
+      { IMGCHEST_API_TOKEN: 'token', RATE_LIMITER: {} as unknown as DurableObjectNamespace }
     );
 
     expect(response.status).toBe(500);

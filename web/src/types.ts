@@ -35,6 +35,7 @@ export interface SxcuResponse {
 
 export interface WorkerEnv {
   IMGCHEST_API_TOKEN?: string;
+  RATE_LIMITER?: DurableObjectNamespace;
 }
 
 export const CORS_HEADERS: Record<string, string> = {

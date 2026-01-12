@@ -127,27 +127,36 @@ describe('Rate limiting', () => {
 
   test('proceeds immediately when no rate limit exists', async () => {
     const start = Date.now();
-    await waitForRateLimitAsync('nonexistent', 1);
+    await waitForRateLimitAsync('nonexistent', null, 1);
     expect(Date.now() - start).toBeLessThan(100);
   });
 
   test('proceeds when requests remaining', async () => {
     const recentWindowStart = Math.floor(Date.now() / 1000) - 10;
-    setRateLimit('test', { remaining: 5, limit: 10, windowStart: recentWindowStart });
+    setRateLimit('test', { remaining: 5, limit: 10, windowStart: recentWindowStart * 1000 });
 
     const start = Date.now();
-    await waitForRateLimitAsync('test', 1);
+    await waitForRateLimitAsync('test', null, 1);
     expect(Date.now() - start).toBeLessThan(500);
+  });
+
+  test('clears expired rate limit windows', async () => {
+    const oldWindowStart = Math.floor(Date.now() / 1000) - 120;
+    setRateLimit('test', { remaining: 0, limit: 10, windowStart: oldWindowStart * 1000 });
+
+    await waitForRateLimitAsync('test', null, 1);
+
+    expect(existsSync(getRateLimitFile('test'))).toBe(false);
   });
 
   test('waits when rate limit exhausted', async () => {
     const recentWindowStart = Math.floor(Date.now() / 1000) - 58;
-    setRateLimit('test', { remaining: 0, limit: 10, windowStart: recentWindowStart });
+    setRateLimit('test', { remaining: 0, limit: 10, reset: Math.floor(Date.now() / 1000) + 2, windowStart: recentWindowStart * 1000 });
 
     const start = Date.now();
-    await waitForRateLimitAsync('test', 1);
+    await waitForRateLimitAsync('test', null, 1);
 
-    expect(Date.now() - start).toBeGreaterThanOrEqual(1000);
+    expect(Date.now() - start).toBeGreaterThanOrEqual(2000);
     expect(existsSync(getRateLimitFile('test'))).toBe(false);
   });
 
@@ -155,7 +164,7 @@ describe('Rate limiting', () => {
     const oldWindowStart = Math.floor(Date.now() / 1000) - 120;
     setRateLimit('test', { remaining: 0, limit: 10, windowStart: oldWindowStart });
 
-    await waitForRateLimitAsync('test', 1);
+    await waitForRateLimitAsync('test', null, 1);
 
     expect(existsSync(getRateLimitFile('test'))).toBe(false);
   });
