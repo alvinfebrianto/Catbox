@@ -600,9 +600,29 @@ class ImageUploader {
             if (uploadedCount > 0) {
               filesToUpload = filesToUpload.slice(uploadedCount);
             }
-            const waitSeconds = getWaitSeconds();
-            this.updateProgress((completedFiles / totalFiles) * 100, 'Rate limited. Waiting ' + waitSeconds + 's...');
-            setTimeout(processNextBurst, waitSeconds * 1000);
+            let waitSeconds = getWaitSeconds();
+
+            const updateCountdown = () => {
+              if (waitSeconds <= 0) {
+                const rateLimitNotice = this.resultsContent.querySelector('#rate-limit-notice');
+                if (rateLimitNotice) rateLimitNotice.remove();
+                processNextBurst();
+                return;
+              }
+
+              const msg = 'Rate limited. Waiting ' + waitSeconds + 's...';
+              this.updateProgress((completedFiles / totalFiles) * 100, msg);
+
+              const rateLimitNotice = this.resultsContent.querySelector('#rate-limit-notice');
+              if (rateLimitNotice) {
+                rateLimitNotice.textContent = 'Rate limited! Waiting ' + waitSeconds + 's before next upload...';
+              }
+
+              waitSeconds--;
+              setTimeout(updateCountdown, 1000);
+            };
+
+            updateCountdown();
           } else {
             const rateLimitNotice = this.resultsContent.querySelector('#rate-limit-notice');
             if (rateLimitNotice) rateLimitNotice.remove();
