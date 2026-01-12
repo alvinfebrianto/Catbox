@@ -11,7 +11,6 @@ export { RateLimiter };
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    const path = url.pathname;
     const method = request.method;
 
     if (method === 'OPTIONS') {
@@ -28,14 +27,16 @@ export default {
     const rateLimiterId = env.RATE_LIMITER.idFromName('global');
     const rateLimiter = env.RATE_LIMITER.get(rateLimiterId);
 
+    const headers = new Headers(request.headers);
+    if (env.IMGCHEST_API_TOKEN && !headers.has('Authorization')) {
+      headers.set('Authorization', 'Bearer ' + env.IMGCHEST_API_TOKEN);
+    }
+
     const rateLimiterRequest = new Request(request.url, {
       method: request.method,
-      headers: request.headers,
+      headers: headers,
       body: request.body,
     });
-
-    const envWithToken: Request & { env?: Env } = rateLimiterRequest as Request & { env?: Env };
-    envWithToken.env = env;
 
     return rateLimiter.fetch(rateLimiterRequest);
   }

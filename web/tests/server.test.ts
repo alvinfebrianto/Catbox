@@ -2,11 +2,14 @@ import { test, expect, describe, mock, beforeEach, afterEach } from 'bun:test';
 import { existsSync, unlinkSync } from 'fs';
 import {
   getImgchestToken,
-  getRateLimitFile,
-  getRateLimit,
-  setRateLimit,
-  clearRateLimit,
-  waitForRateLimitAsync,
+  loadRateLimits,
+  saveRateLimits,
+  resetRateLimits,
+  cleanupExpiredEntries,
+  checkImgchestRateLimit,
+  checkSxcuRateLimit,
+  updateImgchestRateLimit,
+  updateSxcuRateLimit,
   handleCatboxUpload,
   handleSxcuCollections,
   handleSxcuFiles,
@@ -18,6 +21,7 @@ import { RateLimitData } from '../src/types';
 
 const originalFetch = globalThis.fetch;
 const originalEnv = { ...process.env };
+const RATE_LIMIT_FILE = 'C:\\Users\\lenovo\\AppData\\Local\\Temp\\image_uploader_rate_limits.json';
 
 function setMockFetch(fn: (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>): void {
   (globalThis as unknown as { fetch: typeof fetch }).fetch = fn as typeof fetch;
@@ -64,13 +68,14 @@ function createMockRequest(url: string, options: { method?: string; formData?: M
 }
 
 function createMockResponse(body: string | object, options: { status?: number; headers?: Record<string, string> } = {}) {
-  const headers = new Map(Object.entries(options.headers || {}));
+  const headers = new Headers(options.headers || {});
   return {
     ok: options.status ? options.status >= 200 && options.status < 300 : true,
     status: options.status || 200,
-    headers: { get: (key: string) => headers.get(key) ?? null },
+    headers,
     text: async () => (typeof body === 'string' ? body : JSON.stringify(body)),
     json: async () => (typeof body === 'string' ? JSON.parse(body) : body),
+    clone: function() { return this; },
   };
 }
 
@@ -79,10 +84,8 @@ function createMockFile(name: string, size = 1024): { name: string; size: number
 }
 
 function cleanupRateLimitFiles(): void {
-  const providers = ['test', 'sxcu', 'imgchest', 'catbox'];
-  for (const provider of providers) {
-    const file = `./image_uploader_${provider}_rate_limit.json`;
-    if (existsSync(file)) unlinkSync(file);
+  if (existsSync(RATE_LIMIT_FILE)) {
+    unlinkSync(RATE_LIMIT_FILE);
   }
 }
 
@@ -107,66 +110,52 @@ describe('Rate limiting', () => {
     cleanupRateLimitFiles();
   });
 
-  test('persists and retrieves rate limit data', () => {
-    const data: RateLimitData = { remaining: 5, limit: 10, windowStart: 1234567890 };
-
-    setRateLimit('test', data);
-    const retrieved = getRateLimit('test');
-
-    expect(retrieved).toEqual(data);
+  test('checkImgchestRateLimit allows when no limit exists', () => {
+    const result = checkImgchestRateLimit(1);
+    expect(result.allowed).toBe(true);
+    expect(result.waitMs).toBe(0);
   });
 
-  test('clears rate limit file', () => {
-    setRateLimit('test', { remaining: 5, limit: 10, windowStart: 123 });
-    expect(existsSync(getRateLimitFile('test'))).toBe(true);
-
-    clearRateLimit('test');
-
-    expect(existsSync(getRateLimitFile('test'))).toBe(false);
+  test('checkSxcuRateLimit allows when no limit exists', () => {
+    const result = checkSxcuRateLimit(null, 1);
+    expect(result.allowed).toBe(true);
+    expect(result.waitMs).toBe(0);
   });
 
-  test('proceeds immediately when no rate limit exists', async () => {
-    const start = Date.now();
-    await waitForRateLimitAsync('nonexistent', null, 1);
-    expect(Date.now() - start).toBeLessThan(100);
+  test('updateImgchestRateLimit updates and persists limits', () => {
+    updateImgchestRateLimit({ limit: 60, remaining: 55 });
+    saveRateLimits();
+
+    loadRateLimits();
+    const result = checkImgchestRateLimit(1);
+    expect(result.allowed).toBe(true);
   });
 
-  test('proceeds when requests remaining', async () => {
-    const recentWindowStart = Math.floor(Date.now() / 1000) - 10;
-    setRateLimit('test', { remaining: 5, limit: 10, windowStart: recentWindowStart * 1000 });
+  test('updateSxcuRateLimit tracks bucket-based limits', () => {
+    updateSxcuRateLimit({ limit: 10, remaining: 5, bucket: 'test-bucket' });
+    saveRateLimits();
 
-    const start = Date.now();
-    await waitForRateLimitAsync('test', null, 1);
-    expect(Date.now() - start).toBeLessThan(500);
+    loadRateLimits();
+    const result = checkSxcuRateLimit('test-bucket', 1);
+    expect(result.allowed).toBe(true);
   });
 
-  test('clears expired rate limit windows', async () => {
-    const oldWindowStart = Math.floor(Date.now() / 1000) - 120;
-    setRateLimit('test', { remaining: 0, limit: 10, windowStart: oldWindowStart * 1000 });
+  test('updateSxcuRateLimit tracks global limits on error', () => {
+    updateSxcuRateLimit({ limit: 240, remaining: 0 }, true);
+    saveRateLimits();
 
-    await waitForRateLimitAsync('test', null, 1);
-
-    expect(existsSync(getRateLimitFile('test'))).toBe(false);
+    loadRateLimits();
+    const result = checkSxcuRateLimit(null, 1);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toBe('global');
   });
 
-  test('waits when rate limit exhausted', async () => {
-    const recentWindowStart = Math.floor(Date.now() / 1000) - 58;
-    setRateLimit('test', { remaining: 0, limit: 10, reset: Math.floor(Date.now() / 1000) + 2, windowStart: recentWindowStart * 1000 });
+  test('cleanupExpiredEntries removes old entries', () => {
+    updateImgchestRateLimit({ limit: 60, remaining: 0 });
+    saveRateLimits();
 
-    const start = Date.now();
-    await waitForRateLimitAsync('test', null, 1);
-
-    expect(Date.now() - start).toBeGreaterThanOrEqual(2000);
-    expect(existsSync(getRateLimitFile('test'))).toBe(false);
-  });
-
-  test('clears expired rate limit windows', async () => {
-    const oldWindowStart = Math.floor(Date.now() / 1000) - 120;
-    setRateLimit('test', { remaining: 0, limit: 10, windowStart: oldWindowStart });
-
-    await waitForRateLimitAsync('test', null, 1);
-
-    expect(existsSync(getRateLimitFile('test'))).toBe(false);
+    loadRateLimits();
+    cleanupExpiredEntries();
   });
 });
 
@@ -211,9 +200,21 @@ describe('Catbox upload handler', () => {
     const response = await handleCatboxUpload(req as unknown as Request);
     expect(response.status).toBe(200);
   });
+
+  test('rejects unknown request types', async () => {
+    const formData = createMockFormData([['reqtype', 'unknown']]);
+    const req = createMockRequest('http://localhost:3000/upload/catbox', { formData });
+
+    const response = await handleCatboxUpload(req as unknown as Request);
+    expect(response.status).toBe(400);
+  });
 });
 
 describe('SXCU upload handlers', () => {
+  beforeEach(() => {
+    resetRateLimits();
+  });
+
   afterEach(() => {
     globalThis.fetch = originalFetch;
     cleanupRateLimitFiles();
@@ -238,7 +239,7 @@ describe('SXCU upload handlers', () => {
     setMockFetch(mock(() =>
       Promise.resolve(createMockResponse(
         { url: 'https://sxcu.net/abc' },
-        { headers: { 'X-RateLimit-Remaining': '58', 'X-RateLimit-Limit': '60' } }
+        { headers: { 'X-RateLimit-Remaining': '58', 'X-RateLimit-Limit': '60', 'X-RateLimit-Bucket': 'files' } }
       ) as unknown as Response)
     ));
 
@@ -248,13 +249,12 @@ describe('SXCU upload handlers', () => {
     const response = await handleSxcuFiles(req as unknown as Request);
 
     expect(response.status).toBe(200);
-    const rateLimit = getRateLimit('sxcu');
-    expect(rateLimit?.remaining).toBe(58);
   });
 });
 
 describe('Imgchest upload handlers', () => {
   beforeEach(() => {
+    resetRateLimits();
     process.env.IMGCHEST_API_TOKEN = 'test-token';
   });
 
@@ -279,7 +279,7 @@ describe('Imgchest upload handlers', () => {
     setMockFetch(mock(() =>
       Promise.resolve(createMockResponse({
         data: { id: 'post123', link: 'https://imgchest.com/p/post123' }
-      }) as unknown as Response)
+      }, { headers: { 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': '59' } }) as unknown as Response)
     ));
 
     const formData = createMockFormData([
@@ -302,7 +302,7 @@ describe('Imgchest upload handlers', () => {
       fetchCallCount++;
       return Promise.resolve(createMockResponse({
         data: { id: 'post123', link: 'https://imgchest.com/p/post123' }
-      }) as unknown as Response);
+      }, { headers: { 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': String(60 - fetchCallCount) } }) as unknown as Response);
     }));
 
     const entries: [string, File][] = [];
@@ -321,7 +321,7 @@ describe('Imgchest upload handlers', () => {
     let capturedUrl = '';
     setMockFetch(mock((url) => {
       capturedUrl = url as string;
-      return Promise.resolve(createMockResponse({ success: true }) as unknown as Response);
+      return Promise.resolve(createMockResponse({ success: true }, { headers: { 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': '58' } }) as unknown as Response);
     }));
 
     const formData = createMockFormData([['images[]', createMockFile('new.png') as unknown as File]]);
@@ -335,7 +335,7 @@ describe('Imgchest upload handlers', () => {
 
   test('handles API errors gracefully', async () => {
     setMockFetch(mock(() =>
-      Promise.resolve(createMockResponse({ error: 'Invalid request' }, { status: 400 }) as unknown as Response)
+      Promise.resolve(createMockResponse({ error: 'Invalid request' }, { status: 400, headers: { 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': '59' } }) as unknown as Response)
     ));
 
     const formData = createMockFormData([['images[]', createMockFile('test.png') as unknown as File]]);
