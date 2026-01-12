@@ -656,6 +656,9 @@ export class RateLimiter {
         const response = await fetch('https://catbox.moe/user/api.php', {
           method: 'POST',
           body: formData,
+          headers: {
+            'User-Agent': 'CatboxUploader/2.0',
+          },
         });
 
         const text = await response.text();

@@ -21,6 +21,7 @@ const PORT = 3000;
 const TEMP_DIR = 'C:\\Users\\lenovo\\AppData\\Local\\Temp';
 const RATE_LIMIT_FILE = `${TEMP_DIR}\\image_uploader_rate_limits.json`;
 const SXCU_GLOBAL_BUCKET = '__sxcu_global__';
+const DEBUG = process.env.DEBUG === 'true';
 
 let rateLimits: AllRateLimits = {
   imgchest: { default: null },
@@ -198,7 +199,9 @@ async function waitWithBackoff(
   const actualWaitMs = Math.max(waitMs, backoffMs);
   const cappedWaitMs = Math.min(actualWaitMs, config.maxDelayMs);
 
-  console.log(`[Rate Limit] Waiting ${cappedWaitMs}ms before retry (attempt ${attempt + 1})`);
+  if (DEBUG) {
+    console.log(`[Rate Limit] Waiting ${cappedWaitMs}ms before retry (attempt ${attempt + 1})`);
+  }
   await new Promise(resolve => setTimeout(resolve, cappedWaitMs));
 }
 
@@ -218,7 +221,9 @@ async function executeWithRateLimitRetry<T>(
       : checkSxcuRateLimit(bucketId, 1);
 
     if (!checkResult.allowed) {
-      console.log(`[Rate Limit] Pre-flight check failed for ${provider}: ${checkResult.reason}`);
+      if (DEBUG) {
+        console.log(`[Rate Limit] Pre-flight check failed for ${provider}: ${checkResult.reason}`);
+      }
       if (attempt === config.maxRetries) {
         throw new Error(`Rate limit exceeded for ${provider}. Reset at: ${new Date(checkResult.resetAt || Date.now()).toISOString()}`);
       }
@@ -239,7 +244,9 @@ async function executeWithRateLimitRetry<T>(
           updateImgchestRateLimit(headers);
         }
 
-        console.log(`[Rate Limit] Received 429 for ${provider}, global: ${isGlobalError}`);
+        if (DEBUG) {
+          console.log(`[Rate Limit] Received 429 for ${provider}, global: ${isGlobalError}`);
+        }
 
         if (attempt === config.maxRetries) {
           throw new Error(`Rate limit exceeded for ${provider} after ${config.maxRetries} retries`);
@@ -253,7 +260,9 @@ async function executeWithRateLimitRetry<T>(
       return result;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
-      console.error(`[Rate Limit] Error on attempt ${attempt + 1}:`, lastError.message);
+      if (DEBUG) {
+        console.error(`[Rate Limit] Error on attempt ${attempt + 1}:`, lastError.message);
+      }
 
       if (attempt === config.maxRetries) {
         throw lastError;
@@ -294,6 +303,9 @@ async function handleCatboxUpload(req: Request): Promise<Response> {
       const response = await fetch('https://catbox.moe/user/api.php', {
         method: 'POST',
         body: formData,
+        headers: {
+          'User-Agent': 'CatboxUploader/2.0',
+        },
       });
 
       const text = await response.text();
@@ -303,7 +315,9 @@ async function handleCatboxUpload(req: Request): Promise<Response> {
       }
 
       if (response.status === 429) {
-        console.log(`[Catbox] Rate limited, attempt ${attempt + 1}`);
+        if (DEBUG) {
+          console.log(`[Catbox] Rate limited, attempt ${attempt + 1}`);
+        }
         if (attempt < DEFAULT_RETRY_CONFIG.maxRetries) {
           const waitMs = calculateExponentialBackoff(attempt);
           await new Promise(resolve => setTimeout(resolve, waitMs));
@@ -315,7 +329,9 @@ async function handleCatboxUpload(req: Request): Promise<Response> {
 
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
-      console.error(`[Catbox] Error on attempt ${attempt + 1}:`, lastError.message);
+      if (DEBUG) {
+        console.error(`[Catbox] Error on attempt ${attempt + 1}:`, lastError.message);
+      }
 
       if (attempt < DEFAULT_RETRY_CONFIG.maxRetries) {
         const waitMs = calculateExponentialBackoff(attempt);
