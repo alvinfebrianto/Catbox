@@ -1,5 +1,4 @@
-.env
-.wrangler/
-*temp/
+node_modules/
 dist/
-nul
+.wrangler/
+.env
