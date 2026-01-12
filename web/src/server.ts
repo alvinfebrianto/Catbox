@@ -210,7 +210,7 @@ async function executeWithRateLimitRetry<T>(
   bucketId: string | null,
   operation: () => Promise<{ response: Response; result: T; isGlobalError?: boolean }>,
   config: RetryConfig = DEFAULT_RETRY_CONFIG
-): Promise<{ response: Response; result: T }> {
+): Promise<{ response: Response; result: T | { error: string } }> {
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt <= config.maxRetries; attempt++) {
@@ -224,6 +224,26 @@ async function executeWithRateLimitRetry<T>(
       if (DEBUG) {
         console.log(`[Rate Limit] Pre-flight check failed for ${provider}: ${checkResult.reason}`);
       }
+
+      if (provider === 'sxcu') {
+        const headers = new Headers();
+        headers.set('X-RateLimit-Remaining', '0');
+        if (checkResult.resetAt) {
+          headers.set('X-RateLimit-Reset', Math.ceil(checkResult.resetAt / 1000).toString());
+        }
+        headers.set('X-RateLimit-Limit', '5');
+        if (checkResult.bucket) headers.set('X-RateLimit-Bucket', checkResult.bucket);
+        if (checkResult.reason === 'global') headers.set('X-RateLimit-Global', 'true');
+
+        return {
+          response: new Response(JSON.stringify({ error: 'Rate limit exceeded' }), {
+            status: 429,
+            headers,
+          }),
+          result: { error: 'Rate limit exceeded' }
+        };
+      }
+
       if (attempt === config.maxRetries) {
         throw new Error(`Rate limit exceeded for ${provider}. Reset at: ${new Date(checkResult.resetAt || Date.now()).toISOString()}`);
       }
@@ -245,6 +265,7 @@ async function executeWithRateLimitRetry<T>(
             isGlobalError = await isSxcuGlobalError(response.clone());
           }
           updateSxcuRateLimit(headers, isGlobalError);
+          return { response, result };
         } else {
           updateImgchestRateLimit(headers);
         }
