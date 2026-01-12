@@ -208,7 +208,7 @@ async function waitWithBackoff(
 async function executeWithRateLimitRetry<T>(
   provider: 'imgchest' | 'sxcu',
   bucketId: string | null,
-  operation: () => Promise<{ response: Response; result: T }>,
+  operation: () => Promise<{ response: Response; result: T; isGlobalError?: boolean }>,
   config: RetryConfig = DEFAULT_RETRY_CONFIG
 ): Promise<{ response: Response; result: T }> {
   let lastError: Error | null = null;
@@ -232,13 +232,18 @@ async function executeWithRateLimitRetry<T>(
     }
 
     try {
-      const result = await operation();
+      const { response, result, isGlobalError: opIsGlobalError } = await operation();
 
-      if (result.response.status === 429) {
-        const headers = parseRateLimitHeaders(result.response.headers);
-        const isGlobalError = headers.isGlobal || await isSxcuGlobalError(result.response.clone());
-
+      if (response.status === 429) {
+        const headers = parseRateLimitHeaders(response.headers);
+        let isGlobalError = headers.isGlobal;
+        
         if (provider === 'sxcu') {
+          if (opIsGlobalError !== undefined) {
+            isGlobalError = isGlobalError || opIsGlobalError;
+          } else if (!isGlobalError && !response.bodyUsed) {
+            isGlobalError = await isSxcuGlobalError(response.clone());
+          }
           updateSxcuRateLimit(headers, isGlobalError);
         } else {
           updateImgchestRateLimit(headers);
@@ -257,7 +262,7 @@ async function executeWithRateLimitRetry<T>(
         continue;
       }
 
-      return result;
+      return { response, result };
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
       if (DEBUG) {
@@ -366,10 +371,9 @@ async function handleSxcuCollections(req: Request): Promise<Response> {
         knownBucket = headers.bucket || null;
 
         const isGlobalError = resp.status === 429 && headers.isGlobal;
-        updateSxcuRateLimit(headers, isGlobalError);
 
         const json = await resp.json();
-        return { response: resp, result: json as Record<string, unknown> };
+        return { response: resp, result: json as Record<string, unknown>, isGlobalError };
       }
     );
 
@@ -418,9 +422,8 @@ async function handleSxcuFiles(req: Request): Promise<Response> {
         }
 
         const isGlobalError = resp.status === 429 && (headers.isGlobal || (json as { code?: number }).code === 2);
-        updateSxcuRateLimit(headers, isGlobalError);
 
-        return { response: resp, result: json };
+        return { response: resp, result: json, isGlobalError };
       }
     );
 
