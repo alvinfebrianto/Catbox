@@ -52,7 +52,7 @@ func (a *App) Run() error {
 
 	err := MainWindow{
 		AssignTo: &a.mainWindow,
-		Title:    "Catbox Uploader",
+		Title:    "Image Uploader",
 		MinSize:  Size{Width: 400, Height: 600},
 		Size:     Size{Width: 420, Height: 650},
 		Layout:   VBox{MarginsZero: false, Margins: Margins{Left: 10, Top: 10, Right: 10, Bottom: 10}},

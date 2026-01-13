@@ -32,13 +32,13 @@ const (
 )
 
 func showError(message string) {
-	title, _ := syscall.UTF16PtrFromString("Catbox Uploader - Error")
+	title, _ := syscall.UTF16PtrFromString("Image Uploader - Error")
 	msg, _ := syscall.UTF16PtrFromString(message)
 	messageBoxW.Call(0, uintptr(unsafe.Pointer(msg)), uintptr(unsafe.Pointer(title)), MB_OK|MB_ICONERROR)
 }
 
 func showInfo(message string) {
-	title, _ := syscall.UTF16PtrFromString("Catbox Uploader")
+	title, _ := syscall.UTF16PtrFromString("Image Uploader")
 	msg, _ := syscall.UTF16PtrFromString(message)
 	messageBoxW.Call(0, uintptr(unsafe.Pointer(msg)), uintptr(unsafe.Pointer(title)), MB_OK|MB_ICONINFORMATION)
 }
@@ -59,7 +59,7 @@ var (
 )
 
 func getRateLimitFilePath(provider string) string {
-	return filepath.Join(os.TempDir(), fmt.Sprintf("catbox_%s_rate_limit.json", provider))
+	return filepath.Join(os.TempDir(), fmt.Sprintf("image_uploader_%s_rate_limit.json", provider))
 }
 
 func loadRateLimitFromFile(provider string) *RateLimitInfo {
@@ -289,7 +289,7 @@ func uploadFileToSxcu(filePath, collectionID string, maxRetries int) (*SxcuRespo
 			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
 		req.Header.Set("Content-Type", writer.FormDataContentType())
-		req.Header.Set("User-Agent", "CatboxUploader/1.0 (+https://github.com)")
+		req.Header.Set("User-Agent", "ImageUploader/1.0 (+https://github.com)")
 
 		resp, err := httpClient.Do(req)
 		if err != nil {
@@ -356,7 +356,7 @@ func createSxcuCollection(title, desc string) (*SxcuCollectionResponse, error) {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("User-Agent", "CatboxUploader/1.0 (+https://github.com)")
+	req.Header.Set("User-Agent", "ImageUploader/1.0 (+https://github.com)")
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -408,7 +408,7 @@ func getImgchestToken() (string, error) {
 		return "", fmt.Errorf("IMGCHEST_API_TOKEN not set and APPDATA not found")
 	}
 
-	configFile := filepath.Join(appData, "catbox_imgchest_token.txt")
+	configFile := filepath.Join(appData, "image_uploader_imgchest_token.txt")
 	data, err := os.ReadFile(configFile)
 	if err != nil {
 		return "", fmt.Errorf("IMGCHEST_API_TOKEN not set. Set the environment variable or create %s with your token", configFile)
