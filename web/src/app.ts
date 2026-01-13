@@ -594,12 +594,13 @@ class ImageUploader {
       const indicesToUpload = filesToUpload.slice(0, burstSize);
       let rateLimited = false;
       let uploadedCount = 0;
+      let burstProcessedCount = 0;
 
       const uploadNext = (idx: number): void => {
         if (idx >= indicesToUpload.length) {
           if (rateLimited) {
-            if (uploadedCount > 0) {
-              filesToUpload = filesToUpload.slice(uploadedCount);
+            if (burstProcessedCount > 0) {
+              filesToUpload = filesToUpload.slice(burstProcessedCount);
             }
             let waitSeconds = getWaitSeconds();
 
@@ -645,6 +646,7 @@ class ImageUploader {
         uploadFile(fileIndex, (err, success) => {
           if (success) {
             uploadedCount++;
+            burstProcessedCount = idx + 1;
             const lastResult = results[results.length - 1];
             if (lastResult?.type === 'success') {
               this.addIncrementalResult(lastResult, results.length - 1);
@@ -661,6 +663,11 @@ class ImageUploader {
             if (existingNotice) existingNotice.remove();
             this.resultsContent.insertBefore(rateLimitNotice, this.resultsContent.firstChild);
             rateLimitNotice.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+            uploadNext(indicesToUpload.length);
+            return;
+          } else {
+            burstProcessedCount = idx + 1;
           }
           uploadNext(idx + 1);
         });
