@@ -207,8 +207,9 @@ class ImageUploader {
   private updateAnonymousWarning(): void {
     const anonymousCheckbox = document.getElementById('anonymous') as HTMLInputElement;
     const existingWarning = this.fileList.parentNode?.querySelector('.anonymous-limit-warning');
+    const isImgchest = this.provider === 'imgchest';
 
-    if (anonymousCheckbox?.checked && this.files.length > 20) {
+    if (isImgchest && anonymousCheckbox?.checked && this.files.length > 20) {
       if (!existingWarning) {
         const warning = document.createElement('div');
         warning.className = 'anonymous-limit-warning';
