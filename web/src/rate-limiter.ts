@@ -94,10 +94,6 @@ export class RateLimiter {
         return await this.handleSxcuFiles(request);
       }
 
-      if (method === 'POST' && path === '/upload/catbox') {
-        return await this.handleCatboxUpload(request);
-      }
-
       return new Response('Not Found', { status: 404, headers: CORS_HEADERS });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
@@ -658,68 +654,5 @@ export class RateLimiter {
         status: 500,
       });
     }
-  }
-
-  private async handleCatboxUpload(request: Request): Promise<Response> {
-    const formData = await request.formData();
-    const reqtype = formData.get('reqtype') as string;
-
-    const validReqTypes = ['fileupload', 'urlupload', 'createalbum'];
-    if (!validReqTypes.includes(reqtype)) {
-      return new Response(JSON.stringify({ error: 'Unknown request type' }), {
-        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
-        status: 400,
-      });
-    }
-
-    let lastError: Error | null = null;
-
-    for (let attempt = 0; attempt <= DEFAULT_RETRY_CONFIG.maxRetries; attempt++) {
-      try {
-        const response = await fetch('https://catbox.moe/user/api.php', {
-          method: 'POST',
-          body: formData,
-          headers: {
-            'User-Agent': 'CatboxUploader/2.0',
-          },
-        });
-
-        const text = await response.text();
-
-        if (response.ok) {
-          return new Response(text, {
-            status: 200,
-            headers: CORS_HEADERS,
-          });
-        }
-
-        if (response.status === 429) {
-          if (attempt < DEFAULT_RETRY_CONFIG.maxRetries) {
-            const waitMs = calculateExponentialBackoff(attempt);
-            await new Promise(resolve => setTimeout(resolve, waitMs));
-            continue;
-          }
-        }
-
-        return new Response(text, {
-          status: response.status,
-          headers: CORS_HEADERS,
-        });
-
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
-
-        if (attempt < DEFAULT_RETRY_CONFIG.maxRetries) {
-          const waitMs = calculateExponentialBackoff(attempt);
-          await new Promise(resolve => setTimeout(resolve, waitMs));
-          continue;
-        }
-      }
-    }
-
-    return new Response(JSON.stringify({ error: lastError?.message || 'Unknown error' }), {
-      status: 500,
-      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
-    });
   }
 }
