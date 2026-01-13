@@ -1047,7 +1047,7 @@ class ImageUploader {
     }
 
     setTimeout(() => {
-      item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }, 100);
   }
 

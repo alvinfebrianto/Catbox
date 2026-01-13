@@ -458,6 +458,18 @@ select option {
     font-size: 13px;
     color: var(--text-primary);
     text-align: left;
+    animation: slideIn 0.4s cubic-bezier(0.2, 0, 0, 1) forwards;
+}
+
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 
 .results .result-item.error {
