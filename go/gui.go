@@ -303,15 +303,17 @@ func (a *App) onUpload() {
 	go func() {
 		var results []string
 		var albumResult string
+		var collectionResult string
+		var postResult string
 		var errors []string
 
 		switch provider {
 		case "catbox":
 			results, albumResult, errors = a.uploadCatbox(urls, title, desc, createAlbum)
 		case "sxcu":
-			results, errors = a.uploadSxcu(title, desc, createCollection)
+			results, collectionResult, errors = a.uploadSxcu(title, desc, createCollection)
 		case "imgchest":
-			results, errors = a.uploadImgchest(title, anonymous, postID)
+			results, postResult, errors = a.uploadImgchest(title, anonymous, postID)
 		}
 
 		a.mainWindow.Synchronize(func() {
@@ -338,6 +340,12 @@ func (a *App) onUpload() {
 
 			if albumResult != "" {
 				output.WriteString(albumResult + "\r\n")
+			}
+			if collectionResult != "" {
+				output.WriteString(collectionResult + "\r\n")
+			}
+			if postResult != "" {
+				output.WriteString(postResult + "\r\n")
 			}
 			for _, r := range results {
 				output.WriteString(r + "\r\n")
@@ -402,8 +410,9 @@ func (a *App) uploadCatbox(urls, title, desc string, createAlbum bool) ([]string
 	return results, albumResult, errors
 }
 
-func (a *App) uploadSxcu(title, desc string, createCollection bool) ([]string, []string) {
+func (a *App) uploadSxcu(title, desc string, createCollection bool) ([]string, string, []string) {
 	var results []string
+	var collectionResult string
 	var errors []string
 	var collectionID string
 
@@ -418,7 +427,7 @@ func (a *App) uploadSxcu(title, desc string, createCollection bool) ([]string, [
 			errors = append(errors, fmt.Sprintf("Collection creation: %v", err))
 		} else {
 			collectionID = coll.CollectionID
-			results = append(results, fmt.Sprintf("Collection: %s", coll.URL))
+			collectionResult = fmt.Sprintf("Collection: %s", coll.GetURL())
 		}
 	}
 
@@ -432,15 +441,16 @@ func (a *App) uploadSxcu(title, desc string, createCollection bool) ([]string, [
 		}
 	}
 
-	return results, errors
+	return results, collectionResult, errors
 }
 
-func (a *App) uploadImgchest(title string, anonymous bool, postID string) ([]string, []string) {
+func (a *App) uploadImgchest(title string, anonymous bool, postID string) ([]string, string, []string) {
 	var results []string
+	var postResult string
 	var errors []string
 
 	if len(a.selectedFiles) == 0 {
-		return results, errors
+		return results, postResult, errors
 	}
 
 	// Adding to existing post
@@ -449,12 +459,12 @@ func (a *App) uploadImgchest(title string, anonymous bool, postID string) ([]str
 		if err != nil {
 			errors = append(errors, err.Error())
 		} else {
-			results = append(results, fmt.Sprintf("Post: %s", resp.Data.Link))
+			postResult = fmt.Sprintf("Post: %s", resp.GetPostURL())
 			for _, img := range resp.Data.Images {
 				results = append(results, img.Link)
 			}
 		}
-		return results, errors
+		return results, postResult, errors
 	}
 
 	// Create new post with all images
@@ -462,11 +472,11 @@ func (a *App) uploadImgchest(title string, anonymous bool, postID string) ([]str
 	if err != nil {
 		errors = append(errors, err.Error())
 	} else {
-		results = append(results, fmt.Sprintf("Post: %s", resp.Data.Link))
+		postResult = fmt.Sprintf("Post: %s", resp.GetPostURL())
 		for _, img := range resp.Data.Images {
 			results = append(results, img.Link)
 		}
 	}
 
-	return results, errors
+	return results, postResult, errors
 }

@@ -243,9 +243,19 @@ type SxcuResponse struct {
 
 type SxcuCollectionResponse struct {
 	CollectionID string `json:"collection_id"`
-	URL          string `json:"url"`
+	Title        string `json:"title"`
+	Description  string `json:"description"`
+	Unlisted     bool   `json:"unlisted"`
+	Private      bool   `json:"private"`
 	Error        string `json:"error"`
 	Code         int    `json:"code"`
+}
+
+func (r *SxcuCollectionResponse) GetURL() string {
+	if r.CollectionID != "" {
+		return fmt.Sprintf("https://sxcu.net/c/%s", r.CollectionID)
+	}
+	return ""
 }
 
 func uploadFileToSxcu(filePath, collectionID string, maxRetries int) (*SxcuResponse, error) {
@@ -396,6 +406,16 @@ type ImgchestPostResponse struct {
 	Message string `json:"message"`
 }
 
+func (r *ImgchestPostResponse) GetPostURL() string {
+	if r.Data.Link != "" {
+		return r.Data.Link
+	}
+	if r.Data.ID != "" {
+		return "https://imgchest.com/p/" + r.Data.ID
+	}
+	return ""
+}
+
 func getImgchestToken() (string, error) {
 	// First check environment variable
 	if token := os.Getenv("IMGCHEST_API_TOKEN"); token != "" {
@@ -419,7 +439,7 @@ func getImgchestToken() (string, error) {
 
 func uploadToImgchest(filePaths []string, title string, anonymous bool, maxRetries int) (*ImgchestPostResponse, error) {
 	token, err := getImgchestToken()
-	if err != nil && !anonymous {
+	if err != nil {
 		return nil, err
 	}
 
@@ -434,8 +454,9 @@ func uploadToImgchest(filePaths []string, title string, anonymous bool, maxRetri
 			writer.WriteField("title", title)
 		}
 		writer.WriteField("privacy", "hidden")
+		writer.WriteField("nsfw", "true")
 		if anonymous {
-			writer.WriteField("anonymous", "true")
+			writer.WriteField("anonymous", "1")
 		}
 
 		for _, filePath := range filePaths {
@@ -464,9 +485,7 @@ func uploadToImgchest(filePaths []string, title string, anonymous bool, maxRetri
 			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
 		req.Header.Set("Content-Type", writer.FormDataContentType())
-		if token != "" && !anonymous {
-			req.Header.Set("Authorization", "Bearer "+token)
-		}
+		req.Header.Set("Authorization", "Bearer "+token)
 
 		resp, err := httpClient.Do(req)
 		if err != nil {
