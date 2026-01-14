@@ -954,15 +954,17 @@ func createSxcuCollection(title, desc string, maxRetries int) (*SxcuCollectionRe
 }
 
 // imgchest API
+type ImgchestImage struct {
+	ID   string `json:"id"`
+	Link string `json:"link"`
+}
+
 type ImgchestPostResponse struct {
 	Data struct {
-		ID        string `json:"id"`
-		Link      string `json:"link"`
-		DeleteURL string `json:"delete_url"`
-		Images    []struct {
-			ID   string `json:"id"`
-			Link string `json:"link"`
-		} `json:"images"`
+		ID        string           `json:"id"`
+		Link      string           `json:"link"`
+		DeleteURL string           `json:"delete_url"`
+		Images    []ImgchestImage  `json:"images"`
 	} `json:"data"`
 	Success bool   `json:"success"`
 	Message string `json:"message"`
@@ -999,7 +1001,11 @@ func getImgchestToken() (string, error) {
 	return strings.TrimSpace(string(data)), nil
 }
 
-func uploadToImgchest(filePaths []string, title string, anonymous bool, maxRetries int) (*ImgchestPostResponse, error) {
+// ImgchestBatchCallback is called after each batch completes with the batch results
+type ImgchestBatchCallback func(batchNum int, totalBatches int, postURL string, imageLinks []string, err error)
+
+// uploadToImgchestBatch uploads a single batch of files (max 20) to create a new post
+func uploadToImgchestBatch(filePaths []string, title string, anonymous bool, maxRetries int) (*ImgchestPostResponse, error) {
 	token, err := getImgchestToken()
 	if err != nil {
 		return nil, err
@@ -1024,8 +1030,11 @@ func uploadToImgchest(filePaths []string, title string, anonymous bool, maxRetri
 		}
 		writer.WriteField("privacy", "hidden")
 		writer.WriteField("nsfw", "true")
+		// Always send anonymous field - "1" for true, "0" for false
 		if anonymous {
 			writer.WriteField("anonymous", "1")
+		} else {
+			writer.WriteField("anonymous", "0")
 		}
 
 		for _, filePath := range filePaths {
@@ -1104,6 +1113,85 @@ func uploadToImgchest(filePaths []string, title string, anonymous bool, maxRetri
 		return nil, lastErr
 	}
 	return nil, fmt.Errorf("max retries exceeded")
+}
+
+// uploadToImgchest uploads files with batching (max 20 per request) and progressive callbacks
+func uploadToImgchest(filePaths []string, title string, anonymous bool, maxRetries int) (*ImgchestPostResponse, error) {
+	return uploadToImgchestWithCallback(filePaths, title, anonymous, maxRetries, nil)
+}
+
+// uploadToImgchestWithCallback uploads files with batching and calls callback after each batch
+func uploadToImgchestWithCallback(filePaths []string, title string, anonymous bool, maxRetries int, callback ImgchestBatchCallback) (*ImgchestPostResponse, error) {
+	if len(filePaths) == 0 {
+		return nil, fmt.Errorf("no files to upload")
+	}
+
+	const batchSize = 20
+	totalBatches := (len(filePaths) + batchSize - 1) / batchSize
+
+	// First batch creates the post
+	firstBatchEnd := batchSize
+	if firstBatchEnd > len(filePaths) {
+		firstBatchEnd = len(filePaths)
+	}
+	firstBatch := filePaths[:firstBatchEnd]
+
+	resp, err := uploadToImgchestBatch(firstBatch, title, anonymous, maxRetries)
+	if err != nil {
+		if callback != nil {
+			callback(1, totalBatches, "", nil, err)
+		}
+		return nil, err
+	}
+
+	// Collect image links from first batch
+	var allImages []ImgchestImage
+	allImages = append(allImages, resp.Data.Images...)
+
+	if callback != nil {
+		var links []string
+		for _, img := range resp.Data.Images {
+			links = append(links, img.Link)
+		}
+		callback(1, totalBatches, resp.GetPostURL(), links, nil)
+	}
+
+	// If we have more files, add them in batches using the post ID
+	if len(filePaths) > batchSize {
+		postID := resp.Data.ID
+
+		for batchNum := 2; batchNum <= totalBatches; batchNum++ {
+			start := (batchNum - 1) * batchSize
+			end := start + batchSize
+			if end > len(filePaths) {
+				end = len(filePaths)
+			}
+			batch := filePaths[start:end]
+
+			addResp, err := addToImgchestPost(postID, batch, maxRetries)
+			if err != nil {
+				if callback != nil {
+					callback(batchNum, totalBatches, resp.GetPostURL(), nil, err)
+				}
+				// Continue with other batches even if one fails
+				continue
+			}
+
+			allImages = append(allImages, addResp.Data.Images...)
+
+			if callback != nil {
+				var links []string
+				for _, img := range addResp.Data.Images {
+					links = append(links, img.Link)
+				}
+				callback(batchNum, totalBatches, resp.GetPostURL(), links, nil)
+			}
+		}
+	}
+
+	// Return combined result
+	resp.Data.Images = allImages
+	return resp, nil
 }
 
 func addToImgchestPost(postID string, filePaths []string, maxRetries int) (*ImgchestPostResponse, error) {

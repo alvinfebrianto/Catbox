@@ -308,6 +308,16 @@ func (a *App) onUpload() {
 	a.outputEdit.SetText("")
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				a.mainWindow.Synchronize(func() {
+					a.uploadButton.SetEnabled(true)
+					a.uploadButton.SetText("Upload")
+					a.outputEdit.SetText(fmt.Sprintf("Panic: %v", r))
+				})
+			}
+		}()
+
 		// Acquire cross-instance upload lock - blocks until we get our turn
 		a.mainWindow.Synchronize(func() {
 			a.uploadButton.SetText("Waiting...")
@@ -342,7 +352,11 @@ func (a *App) onUpload() {
 				})
 			})
 		case "imgchest":
-			results, postResult, errors = a.uploadImgchest(title, anonymous, postID)
+			results, postResult, errors = a.uploadImgchest(title, anonymous, postID, func(text string) {
+				a.mainWindow.Synchronize(func() {
+					a.outputEdit.SetText(text)
+				})
+			})
 		}
 
 		a.mainWindow.Synchronize(func() {
@@ -543,7 +557,7 @@ func (a *App) uploadSxcu(title, desc string, createCollection bool, updateOutput
 	return results, collectionResult, errors
 }
 
-func (a *App) uploadImgchest(title string, anonymous bool, postID string) ([]string, string, []string) {
+func (a *App) uploadImgchest(title string, anonymous bool, postID string, updateOutput func(string)) ([]string, string, []string) {
 	var results []string
 	var postResult string
 	var errors []string
@@ -552,30 +566,79 @@ func (a *App) uploadImgchest(title string, anonymous bool, postID string) ([]str
 		return results, postResult, errors
 	}
 
-	// Adding to existing post
-	if postID != "" {
-		resp, err := addToImgchestPost(postID, a.selectedFiles, 3)
-		if err != nil {
-			errors = append(errors, err.Error())
+	totalFiles := len(a.selectedFiles)
+
+	buildOutput := func() string {
+		var output strings.Builder
+		successCount := len(results)
+		failCount := len(errors)
+		if failCount > 0 {
+			output.WriteString(fmt.Sprintf("Uploading... %d/%d (%d failed)\r\n\r\n", successCount, totalFiles, failCount))
 		} else {
-			postResult = fmt.Sprintf("Post: %s", resp.GetPostURL())
-			for _, img := range resp.Data.Images {
-				results = append(results, img.Link)
+			output.WriteString(fmt.Sprintf("Uploading... %d/%d\r\n\r\n", successCount, totalFiles))
+		}
+		if postResult != "" {
+			output.WriteString(postResult + "\r\n")
+		}
+		for _, r := range results {
+			output.WriteString(r + "\r\n")
+		}
+		for _, e := range errors {
+			output.WriteString("Error: " + e + "\r\n")
+		}
+		return output.String()
+	}
+
+	// Adding to existing post - batch if needed
+	if postID != "" {
+		const batchSize = 20
+		totalBatches := (len(a.selectedFiles) + batchSize - 1) / batchSize
+
+		for batchNum := 1; batchNum <= totalBatches; batchNum++ {
+			start := (batchNum - 1) * batchSize
+			end := start + batchSize
+			if end > len(a.selectedFiles) {
+				end = len(a.selectedFiles)
 			}
+			batch := a.selectedFiles[start:end]
+
+			resp, err := addToImgchestPost(postID, batch, 3)
+			if err != nil {
+				errors = append(errors, fmt.Sprintf("Batch %d: %s", batchNum, err.Error()))
+			} else {
+				if postResult == "" {
+					postResult = fmt.Sprintf("Post: %s", resp.GetPostURL())
+				}
+				for _, img := range resp.Data.Images {
+					results = append(results, img.Link)
+				}
+			}
+			updateOutput(buildOutput())
 		}
 		return results, postResult, errors
 	}
 
-	// Create new post with all images
-	resp, err := uploadToImgchest(a.selectedFiles, title, anonymous, 3)
-	if err != nil {
-		errors = append(errors, err.Error())
-	} else {
-		postResult = fmt.Sprintf("Post: %s", resp.GetPostURL())
-		for _, img := range resp.Data.Images {
-			results = append(results, img.Link)
+	// Create new post with batching and progressive updates
+	// Track which links we've already seen to avoid duplicates from API returning all images
+	seenLinks := make(map[string]bool)
+	callback := func(batchNum int, totalBatches int, postURL string, imageLinks []string, err error) {
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("Batch %d: %s", batchNum, err.Error()))
+		} else {
+			if postResult == "" && postURL != "" {
+				postResult = fmt.Sprintf("Post: %s", postURL)
+			}
+			for _, link := range imageLinks {
+				if !seenLinks[link] {
+					seenLinks[link] = true
+					results = append(results, link)
+				}
+			}
 		}
+		updateOutput(buildOutput())
 	}
+
+	uploadToImgchestWithCallback(a.selectedFiles, title, anonymous, 3, callback)
 
 	return results, postResult, errors
 }
