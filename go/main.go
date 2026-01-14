@@ -107,6 +107,27 @@ func getUploadLockPath() string {
 var lockFile *os.File
 var uploadLockFile *os.File
 
+func TryAcquireUploadLock() (bool, error) {
+	lockPath := getUploadLockPath()
+	var err error
+	uploadLockFile, err = os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0666)
+	if err != nil {
+		return false, err
+	}
+	handle := windows.Handle(uploadLockFile.Fd())
+	var overlapped windows.Overlapped
+	err = windows.LockFileEx(handle, windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &overlapped)
+	if err != nil {
+		uploadLockFile.Close()
+		uploadLockFile = nil
+		if err == windows.ERROR_LOCK_VIOLATION {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 func AcquireUploadLock() error {
 	lockPath := getUploadLockPath()
 	var err error

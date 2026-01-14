@@ -320,13 +320,36 @@ func (a *App) onUpload() {
 		return
 	}
 
-	err := AcquireUploadLock()
+	acquired, err := TryAcquireUploadLock()
 	if err != nil {
-		showError("Another upload is in progress. Please wait for it to complete.")
+		showError(fmt.Sprintf("Failed to acquire upload lock: %v", err))
 		return
 	}
 
 	a.uploadButton.SetEnabled(false)
+
+	if !acquired {
+		a.outputEdit.SetText("Waiting for another upload to complete...\r\n")
+		go func() {
+			err := AcquireUploadLock()
+			if err != nil {
+				a.mainWindow.Synchronize(func() {
+					a.outputEdit.SetText(fmt.Sprintf("Failed to acquire lock: %v", err))
+					a.uploadButton.SetEnabled(true)
+				})
+				return
+			}
+			a.mainWindow.Synchronize(func() {
+				a.startUpload()
+			})
+		}()
+		return
+	}
+
+	a.startUpload()
+}
+
+func (a *App) startUpload() {
 	a.outputEdit.SetText("Starting upload...\r\n")
 
 	go func() {
