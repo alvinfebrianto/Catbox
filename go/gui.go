@@ -25,11 +25,15 @@ type App struct {
 	collectionCheck  *walk.CheckBox
 	anonymousCheck   *walk.CheckBox
 	postIDEdit       *walk.LineEdit
-	postIDLabel      *walk.Label
 	outputEdit       *walk.TextEdit
 	uploadButton     *walk.PushButton
 	selectedFiles    []string
 	uploadCompleted  bool
+
+	urlComposite        *walk.Composite
+	catboxOptsComposite *walk.Composite
+	sxcuOptsComposite   *walk.Composite
+	imgchestOptsComposite *walk.Composite
 }
 
 type FileListModel struct {
@@ -42,7 +46,10 @@ func (m *FileListModel) ItemCount() int {
 }
 
 func (m *FileListModel) Value(index int) interface{} {
-	return m.items[index]
+	if index >= 0 && index < len(m.items) {
+		return filepath.Base(m.items[index])
+	}
+	return ""
 }
 
 func NewApp() *App {
@@ -57,101 +64,134 @@ func (a *App) Run() error {
 	err := MainWindow{
 		AssignTo: &a.mainWindow,
 		Title:    "Image Uploader",
-		MinSize:  Size{Width: 400, Height: 600},
-		Size:     Size{Width: 420, Height: 650},
-		Layout:   VBox{MarginsZero: false, Margins: Margins{Left: 10, Top: 10, Right: 10, Bottom: 10}},
+		MinSize:  Size{Width: 360, Height: 480},
+		Size:     Size{Width: 380, Height: 520},
+		Layout:   VBox{Margins: Margins{Left: 12, Top: 12, Right: 12, Bottom: 12}, Spacing: 8},
 		Children: []Widget{
 			Composite{
-				Layout: HBox{MarginsZero: true},
+				Layout: HBox{MarginsZero: true, Spacing: 8},
 				Children: []Widget{
-					Label{Text: "Provider:"},
-					ComboBox{
-						AssignTo:      &a.providerCombo,
-						Model:         providers,
-						CurrentIndex:  0,
-						OnCurrentIndexChanged: a.onProviderChanged,
+					Composite{
+						Layout:  HBox{MarginsZero: true, Spacing: 6},
+						MaxSize: Size{Width: 160},
+						Children: []Widget{
+							Label{Text: "Provider:", MinSize: Size{Width: 55}},
+							ComboBox{
+								AssignTo:              &a.providerCombo,
+								Model:                 providers,
+								CurrentIndex:          0,
+								OnCurrentIndexChanged: a.onProviderChanged,
+								MinSize:               Size{Width: 90},
+							},
+						},
+					},
+					HSpacer{},
+					PushButton{
+						Text:      "＋ Add Files",
+						OnClicked: a.onSelectFiles,
+						MinSize:   Size{Width: 90},
+					},
+					PushButton{
+						Text:      "✕ Remove",
+						OnClicked: a.onRemoveSelected,
+						MinSize:   Size{Width: 80},
 					},
 				},
 			},
 
-			Label{Text: "Files:"},
-			Composite{
-				Layout: HBox{MarginsZero: true},
-				Children: []Widget{
-					PushButton{
-						Text:      "Select Files",
-						OnClicked: a.onSelectFiles,
-					},
-					PushButton{
-						Text:      "Remove Selected",
-						OnClicked: a.onRemoveSelected,
-					},
-				},
-			},
 			ListBox{
 				AssignTo:       &a.fileListBox,
 				Model:          a.fileListModel,
-				MinSize:        Size{Height: 100},
+				MinSize:        Size{Height: 90},
 				MultiSelection: true,
 				OnKeyDown:      a.onFileListKeyDown,
+				ToolTipText:    "Selected files (shows filename only, full path on hover)",
 			},
 
-			Label{Text: "URLs (comma-separated, catbox only):"},
-			LineEdit{
-				AssignTo: &a.urlEdit,
+			Composite{
+				AssignTo: &a.urlComposite,
+				Layout:   HBox{MarginsZero: true, Spacing: 6},
+				Children: []Widget{
+					Label{Text: "URLs:", MinSize: Size{Width: 55}},
+					LineEdit{
+						AssignTo:    &a.urlEdit,
+						ToolTipText: "Comma-separated URLs to upload",
+					},
+				},
 			},
 
-			Label{Text: "Title:"},
-			LineEdit{
-				AssignTo: &a.titleEdit,
+			Composite{
+				Layout: Grid{Columns: 4, MarginsZero: true, Spacing: 6},
+				Children: []Widget{
+					Label{Text: "Title:", MinSize: Size{Width: 55}},
+					LineEdit{
+						AssignTo:   &a.titleEdit,
+						ColumnSpan: 3,
+					},
+					Label{Text: "Description:", MinSize: Size{Width: 55}},
+					LineEdit{
+						AssignTo:   &a.descEdit,
+						ColumnSpan: 3,
+					},
+				},
 			},
 
-			Label{Text: "Description:"},
-			LineEdit{
-				AssignTo: &a.descEdit,
+			Composite{
+				AssignTo: &a.catboxOptsComposite,
+				Layout:   HBox{MarginsZero: true},
+				Children: []Widget{
+					CheckBox{
+						AssignTo: &a.albumCheck,
+						Text:     "Create Album",
+						Checked:  true,
+					},
+				},
 			},
 
-			CheckBox{
-				AssignTo: &a.albumCheck,
-				Text:     "Create Album (catbox only)",
-				Checked:  true,
+			Composite{
+				AssignTo: &a.sxcuOptsComposite,
+				Layout:   HBox{MarginsZero: true},
+				Visible:  false,
+				Children: []Widget{
+					CheckBox{
+						AssignTo: &a.collectionCheck,
+						Text:     "Create Collection",
+						Checked:  true,
+					},
+				},
 			},
 
-			CheckBox{
-				AssignTo: &a.collectionCheck,
-				Text:     "Create Collection (sxcu only)",
-				Checked:  true,
-				Enabled:  false,
-			},
-
-			CheckBox{
-				AssignTo:          &a.anonymousCheck,
-				Text:              "Anonymous (imgchest only)",
-				Enabled:           false,
-				OnCheckedChanged:  a.onAnonymousChanged,
-			},
-
-			Label{
-				AssignTo: &a.postIDLabel,
-				Text:     "Post ID (add to existing, imgchest only):",
-			},
-			LineEdit{
-				AssignTo: &a.postIDEdit,
-				Enabled:  false,
+			Composite{
+				AssignTo: &a.imgchestOptsComposite,
+				Layout:   HBox{MarginsZero: true, Spacing: 12},
+				Visible:  false,
+				Children: []Widget{
+					CheckBox{
+						AssignTo:         &a.anonymousCheck,
+						Text:             "Anonymous",
+						OnCheckedChanged: a.onAnonymousChanged,
+					},
+					Label{Text: "Post ID:"},
+					LineEdit{
+						AssignTo:    &a.postIDEdit,
+						ToolTipText: "Add to existing post (leave empty for new)",
+						MinSize:     Size{Width: 120},
+					},
+				},
 			},
 
 			PushButton{
 				AssignTo:  &a.uploadButton,
-				Text:      "Upload",
+				Text:      "⬆ Upload",
 				OnClicked: a.onUpload,
+				MinSize:   Size{Height: 32},
 			},
 
-			Label{Text: "Output:"},
 			TextEdit{
 				AssignTo: &a.outputEdit,
 				ReadOnly: true,
 				VScroll:  true,
-				MinSize:  Size{Height: 120},
+				MinSize:  Size{Height: 100},
 			},
 		},
 	}.Create()
@@ -167,34 +207,38 @@ func (a *App) Run() error {
 func (a *App) onProviderChanged() {
 	provider := a.providerCombo.Text()
 
-	a.urlEdit.SetEnabled(provider == "catbox")
-	if provider != "catbox" {
+	isCatbox := provider == "catbox"
+	isSxcu := provider == "sxcu"
+	isImgchest := provider == "imgchest"
+
+	a.urlComposite.SetVisible(isCatbox)
+	if !isCatbox {
 		a.urlEdit.SetText("")
 	}
 
-	a.albumCheck.SetEnabled(provider == "catbox")
-	if provider != "catbox" {
-		a.albumCheck.SetChecked(false)
-	} else {
+	a.catboxOptsComposite.SetVisible(isCatbox)
+	a.albumCheck.SetEnabled(isCatbox)
+	if isCatbox {
 		a.albumCheck.SetChecked(true)
-	}
-
-	a.collectionCheck.SetEnabled(provider == "sxcu")
-	if provider != "sxcu" {
-		a.collectionCheck.SetChecked(false)
 	} else {
+		a.albumCheck.SetChecked(false)
+	}
+
+	a.sxcuOptsComposite.SetVisible(isSxcu)
+	a.collectionCheck.SetEnabled(isSxcu)
+	if isSxcu {
 		a.collectionCheck.SetChecked(true)
+	} else {
+		a.collectionCheck.SetChecked(false)
 	}
 
-	a.anonymousCheck.SetEnabled(provider == "imgchest")
-	if provider != "imgchest" {
+	a.imgchestOptsComposite.SetVisible(isImgchest)
+	a.anonymousCheck.SetEnabled(isImgchest)
+	if !isImgchest {
 		a.anonymousCheck.SetChecked(false)
-	}
-
-	a.postIDEdit.SetEnabled(provider == "imgchest" && !a.anonymousCheck.Checked())
-	if provider != "imgchest" {
 		a.postIDEdit.SetText("")
 	}
+	a.postIDEdit.SetEnabled(isImgchest && !a.anonymousCheck.Checked())
 }
 
 func (a *App) onAnonymousChanged() {
@@ -251,15 +295,15 @@ func (a *App) onRemoveSelected() {
 		return
 	}
 
-	indexMap := make(map[int]bool)
+	removeSet := make(map[int]bool)
 	for _, idx := range indices {
-		indexMap[idx] = true
+		removeSet[idx] = true
 	}
 
-	newFiles := []string{}
-	newItems := []string{}
+	var newFiles []string
+	var newItems []string
 	for i, f := range a.selectedFiles {
-		if !indexMap[i] {
+		if !removeSet[i] {
 			newFiles = append(newFiles, f)
 			newItems = append(newItems, a.fileListModel.items[i])
 		}
@@ -268,132 +312,85 @@ func (a *App) onRemoveSelected() {
 	a.selectedFiles = newFiles
 	a.fileListModel.items = newItems
 	a.fileListModel.PublishItemsReset()
-
-	if len(a.selectedFiles) == 0 {
-		a.titleEdit.SetText("")
-	}
 }
 
 func (a *App) onUpload() {
-	provider := a.providerCombo.Text()
-	urls := strings.TrimSpace(a.urlEdit.Text())
-	title := a.titleEdit.Text()
-	desc := a.descEdit.Text()
-	createAlbum := a.albumCheck.Checked()
-	createCollection := a.collectionCheck.Checked()
-	anonymous := a.anonymousCheck.Checked()
-	postID := strings.TrimSpace(a.postIDEdit.Text())
-
-	if len(a.selectedFiles) == 0 && urls == "" {
-		showError("Please select files or enter URLs to upload.")
+	if len(a.selectedFiles) == 0 && a.urlEdit.Text() == "" {
+		showError("Please select files or enter URLs to upload")
 		return
 	}
 
-	if (provider == "sxcu" || provider == "imgchest") && urls != "" {
-		showError(fmt.Sprintf("%s does not support URL uploads.", provider))
+	err := AcquireUploadLock()
+	if err != nil {
+		showError("Another upload is in progress. Please wait for it to complete.")
 		return
 	}
 
 	a.uploadButton.SetEnabled(false)
-	a.uploadButton.SetText("Uploading...")
-	a.outputEdit.SetText("")
+	a.outputEdit.SetText("Starting upload...\r\n")
 
 	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				a.mainWindow.Synchronize(func() {
-					a.uploadButton.SetEnabled(true)
-					a.uploadButton.SetText("Upload")
-					a.outputEdit.SetText(fmt.Sprintf("Panic: %v", r))
-				})
-			}
-		}()
-
-		a.mainWindow.Synchronize(func() {
-			a.uploadButton.SetText("Waiting...")
-		})
-		if err := AcquireUploadLock(); err != nil {
-			a.mainWindow.Synchronize(func() {
-				a.uploadButton.SetEnabled(true)
-				a.uploadButton.SetText("Upload")
-				a.outputEdit.SetText("Error: Failed to acquire upload lock: " + err.Error())
-			})
-			return
-		}
 		defer ReleaseUploadLock()
 
-		a.mainWindow.Synchronize(func() {
-			a.uploadButton.SetText("Uploading...")
-		})
+		provider := a.providerCombo.Text()
+		title := a.titleEdit.Text()
+		desc := a.descEdit.Text()
 
 		var results []string
-		var albumResult string
-		var collectionResult string
-		var postResult string
+		var groupResult string
 		var errors []string
-		var imgchestUploadedCount int
+		var successCount int
+
+		updateOutput := func(text string) {
+			a.mainWindow.Synchronize(func() {
+				a.outputEdit.SetText(text)
+			})
+		}
 
 		switch provider {
 		case "catbox":
-			results, albumResult, errors = a.uploadCatbox(urls, title, desc, createAlbum)
+			urls := a.urlEdit.Text()
+			createAlbum := a.albumCheck.Checked()
+			results, groupResult, errors = a.uploadCatbox(urls, title, desc, createAlbum)
+			successCount = len(results)
+
 		case "sxcu":
-			results, collectionResult, errors = a.uploadSxcu(title, desc, createCollection, func(text string) {
-				a.mainWindow.Synchronize(func() {
-					a.outputEdit.SetText(text)
-				})
-			})
+			createCollection := a.collectionCheck.Checked()
+			results, groupResult, errors = a.uploadSxcu(title, desc, createCollection, updateOutput)
+			successCount = len(results)
+
 		case "imgchest":
-			results, postResult, errors, imgchestUploadedCount = a.uploadImgchest(title, anonymous, postID, func(text string) {
-				a.mainWindow.Synchronize(func() {
-					a.outputEdit.SetText(text)
-				})
-			})
+			anonymous := a.anonymousCheck.Checked()
+			postID := a.postIDEdit.Text()
+			results, groupResult, errors, successCount = a.uploadImgchest(title, anonymous, postID, updateOutput)
 		}
 
 		a.mainWindow.Synchronize(func() {
-			a.uploadButton.SetEnabled(true)
-			a.uploadButton.SetText("Upload")
-
-			totalInputs := len(a.selectedFiles)
-			if urls != "" {
-				for _, u := range strings.Split(urls, ",") {
-					if strings.TrimSpace(u) != "" {
-						totalInputs++
-					}
-				}
-			}
-			var successCount int
-			if provider == "imgchest" {
-				successCount = imgchestUploadedCount
-			} else {
-				successCount = len(results)
-			}
-			failCount := len(errors)
-
 			var output strings.Builder
-			if failCount > 0 {
-				output.WriteString(fmt.Sprintf("Uploaded %d/%d (%d failed)\r\n\r\n", successCount, totalInputs, failCount))
+
+			if len(errors) > 0 {
+				output.WriteString(fmt.Sprintf("Done: %d success, %d failed\r\n\r\n", successCount, len(errors)))
 			} else {
-				output.WriteString(fmt.Sprintf("Uploaded %d/%d\r\n\r\n", successCount, totalInputs))
+				output.WriteString(fmt.Sprintf("Done: %d uploaded\r\n\r\n", successCount))
 			}
 
-			if albumResult != "" {
-				output.WriteString(albumResult + "\r\n")
+			if groupResult != "" {
+				output.WriteString(groupResult + "\r\n")
 			}
-			if collectionResult != "" {
-				output.WriteString(collectionResult + "\r\n")
-			}
-			if postResult != "" {
-				output.WriteString(postResult + "\r\n")
-			}
+
 			for _, r := range results {
 				output.WriteString(r + "\r\n")
 			}
-			for _, e := range errors {
-				output.WriteString("Error: " + e + "\r\n")
+
+			if len(errors) > 0 {
+				output.WriteString("\r\nErrors:\r\n")
+				for _, e := range errors {
+					output.WriteString("• " + e + "\r\n")
+				}
 			}
 
 			a.outputEdit.SetText(output.String())
+			a.uploadButton.SetEnabled(true)
 
 			if successCount > 0 {
 				a.uploadCompleted = true
