@@ -19,7 +19,6 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// Windows API for MessageBox
 var (
 	user32         = syscall.NewLazyDLL("user32.dll")
 	messageBoxW    = user32.NewProc("MessageBoxW")
@@ -45,7 +44,6 @@ func showInfo(message string) {
 	messageBoxW.Call(0, uintptr(unsafe.Pointer(msg)), uintptr(unsafe.Pointer(title)), MB_OK|MB_ICONINFORMATION)
 }
 
-// Rate limit structures
 type RateLimitEntry struct {
 	Limit       int   `json:"limit"`
 	Remaining   int   `json:"remaining"`
@@ -109,8 +107,6 @@ func getUploadLockPath() string {
 var lockFile *os.File
 var uploadLockFile *os.File
 
-// AcquireUploadLock acquires a cross-instance exclusive lock for uploads.
-// This ensures only one instance can upload at a time.
 func AcquireUploadLock() error {
 	lockPath := getUploadLockPath()
 	var err error
@@ -120,7 +116,6 @@ func AcquireUploadLock() error {
 	}
 	handle := windows.Handle(uploadLockFile.Fd())
 	var overlapped windows.Overlapped
-	// LOCKFILE_EXCLUSIVE_LOCK blocks until the lock is acquired
 	err = windows.LockFileEx(handle, windows.LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, &overlapped)
 	if err != nil {
 		uploadLockFile.Close()
@@ -130,7 +125,6 @@ func AcquireUploadLock() error {
 	return nil
 }
 
-// ReleaseUploadLock releases the cross-instance upload lock.
 func ReleaseUploadLock() {
 	if uploadLockFile != nil {
 		handle := windows.Handle(uploadLockFile.Fd())
@@ -489,7 +483,6 @@ func calculateExponentialBackoff(attempt int, baseDelayMs, maxDelayMs int64) tim
 	return time.Duration(delay)*time.Millisecond + jitter
 }
 
-// Allowed file types for sxcu
 var sxcuAllowedExtensions = map[string]bool{
 	".png": true, ".gif": true, ".jpeg": true, ".jpg": true,
 	".ico": true, ".bmp": true, ".tiff": true, ".tif": true,
@@ -501,12 +494,10 @@ func isSxcuAllowedFileType(path string) bool {
 	return sxcuAllowedExtensions[ext]
 }
 
-// HTTP client with timeout
 var httpClient = &http.Client{
 	Timeout: 5 * time.Minute,
 }
 
-// Catbox API
 func uploadFileToCatbox(filePath string) (string, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -619,7 +610,6 @@ func createCatboxAlbum(fileNames []string, title, desc string) (string, error) {
 	return result, nil
 }
 
-// sxcu.net API
 type SxcuResponse struct {
 	ID    string `json:"id"`
 	URL   string `json:"url"`
@@ -953,7 +943,6 @@ func createSxcuCollection(title, desc string, maxRetries int) (*SxcuCollectionRe
 	return nil, fmt.Errorf("max retries exceeded")
 }
 
-// imgchest API
 type ImgchestImage struct {
 	ID   string `json:"id"`
 	Link string `json:"link"`
@@ -981,12 +970,10 @@ func (r *ImgchestPostResponse) GetPostURL() string {
 }
 
 func getImgchestToken() (string, error) {
-	// First check environment variable
 	if token := os.Getenv("IMGCHEST_API_TOKEN"); token != "" {
 		return token, nil
 	}
 
-	// Then check config file
 	appData := os.Getenv("APPDATA")
 	if appData == "" {
 		return "", fmt.Errorf("IMGCHEST_API_TOKEN not set and APPDATA not found")
@@ -1001,10 +988,8 @@ func getImgchestToken() (string, error) {
 	return strings.TrimSpace(string(data)), nil
 }
 
-// ImgchestBatchCallback is called after each batch completes with the batch results
 type ImgchestBatchCallback func(batchNum int, totalBatches int, postURL string, imageLinks []string, err error)
 
-// uploadToImgchestBatch uploads a single batch of files (max 20) to create a new post
 func uploadToImgchestBatch(filePaths []string, title string, anonymous bool, maxRetries int) (*ImgchestPostResponse, error) {
 	token, err := getImgchestToken()
 	if err != nil {
@@ -1030,7 +1015,6 @@ func uploadToImgchestBatch(filePaths []string, title string, anonymous bool, max
 		}
 		writer.WriteField("privacy", "hidden")
 		writer.WriteField("nsfw", "true")
-		// Always send anonymous field - "1" for true, "0" for false
 		if anonymous {
 			writer.WriteField("anonymous", "1")
 		} else {
@@ -1115,12 +1099,10 @@ func uploadToImgchestBatch(filePaths []string, title string, anonymous bool, max
 	return nil, fmt.Errorf("max retries exceeded")
 }
 
-// uploadToImgchest uploads files with batching (max 20 per request) and progressive callbacks
 func uploadToImgchest(filePaths []string, title string, anonymous bool, maxRetries int) (*ImgchestPostResponse, error) {
 	return uploadToImgchestWithCallback(filePaths, title, anonymous, maxRetries, nil)
 }
 
-// uploadToImgchestWithCallback uploads files with batching and calls callback after each batch
 func uploadToImgchestWithCallback(filePaths []string, title string, anonymous bool, maxRetries int, callback ImgchestBatchCallback) (*ImgchestPostResponse, error) {
 	if len(filePaths) == 0 {
 		return nil, fmt.Errorf("no files to upload")
@@ -1129,7 +1111,6 @@ func uploadToImgchestWithCallback(filePaths []string, title string, anonymous bo
 	const batchSize = 20
 	totalBatches := (len(filePaths) + batchSize - 1) / batchSize
 
-	// First batch creates the post
 	firstBatchEnd := batchSize
 	if firstBatchEnd > len(filePaths) {
 		firstBatchEnd = len(filePaths)
@@ -1144,7 +1125,6 @@ func uploadToImgchestWithCallback(filePaths []string, title string, anonymous bo
 		return nil, err
 	}
 
-	// Collect image links from first batch
 	var allImages []ImgchestImage
 	allImages = append(allImages, resp.Data.Images...)
 
@@ -1156,7 +1136,6 @@ func uploadToImgchestWithCallback(filePaths []string, title string, anonymous bo
 		callback(1, totalBatches, resp.GetPostURL(), links, nil)
 	}
 
-	// If we have more files, add them in batches using the post ID
 	if len(filePaths) > batchSize {
 		postID := resp.Data.ID
 
@@ -1173,7 +1152,6 @@ func uploadToImgchestWithCallback(filePaths []string, title string, anonymous bo
 				if callback != nil {
 					callback(batchNum, totalBatches, resp.GetPostURL(), nil, err)
 				}
-				// Continue with other batches even if one fails
 				continue
 			}
 
@@ -1189,7 +1167,6 @@ func uploadToImgchestWithCallback(filePaths []string, title string, anonymous bo
 		}
 	}
 
-	// Return combined result
 	resp.Data.Images = allImages
 	return resp, nil
 }
@@ -1293,7 +1270,6 @@ func addToImgchestPost(postID string, filePaths []string, maxRetries int) (*Imgc
 	return nil, fmt.Errorf("max retries exceeded")
 }
 
-// Extract filename from catbox URL (e.g., "https://files.catbox.moe/abc123.png" -> "abc123.png")
 func extractCatboxFilename(url string) string {
 	parts := strings.Split(url, "/")
 	if len(parts) > 0 {

@@ -61,7 +61,6 @@ func (a *App) Run() error {
 		Size:     Size{Width: 420, Height: 650},
 		Layout:   VBox{MarginsZero: false, Margins: Margins{Left: 10, Top: 10, Right: 10, Bottom: 10}},
 		Children: []Widget{
-			// Provider selection
 			Composite{
 				Layout: HBox{MarginsZero: true},
 				Children: []Widget{
@@ -75,7 +74,6 @@ func (a *App) Run() error {
 				},
 			},
 
-			// File selection
 			Label{Text: "Files:"},
 			Composite{
 				Layout: HBox{MarginsZero: true},
@@ -98,32 +96,27 @@ func (a *App) Run() error {
 				OnKeyDown:      a.onFileListKeyDown,
 			},
 
-			// URL input (catbox only)
 			Label{Text: "URLs (comma-separated, catbox only):"},
 			LineEdit{
 				AssignTo: &a.urlEdit,
 			},
 
-			// Title
 			Label{Text: "Title:"},
 			LineEdit{
 				AssignTo: &a.titleEdit,
 			},
 
-			// Description
 			Label{Text: "Description:"},
 			LineEdit{
 				AssignTo: &a.descEdit,
 			},
 
-			// Create Album checkbox (catbox only)
 			CheckBox{
 				AssignTo: &a.albumCheck,
 				Text:     "Create Album (catbox only)",
 				Checked:  true,
 			},
 
-			// Create Collection checkbox (sxcu only)
 			CheckBox{
 				AssignTo: &a.collectionCheck,
 				Text:     "Create Collection (sxcu only)",
@@ -131,14 +124,13 @@ func (a *App) Run() error {
 				Enabled:  false,
 			},
 
-			// Anonymous checkbox (imgchest only)
 			CheckBox{
-				AssignTo: &a.anonymousCheck,
-				Text:     "Anonymous (imgchest only)",
-				Enabled:  false,
+				AssignTo:          &a.anonymousCheck,
+				Text:              "Anonymous (imgchest only)",
+				Enabled:           false,
+				OnCheckedChanged:  a.onAnonymousChanged,
 			},
 
-			// Post ID (imgchest only)
 			Label{
 				AssignTo: &a.postIDLabel,
 				Text:     "Post ID (add to existing, imgchest only):",
@@ -148,14 +140,12 @@ func (a *App) Run() error {
 				Enabled:  false,
 			},
 
-			// Upload button
 			PushButton{
 				AssignTo:  &a.uploadButton,
 				Text:      "Upload",
 				OnClicked: a.onUpload,
 			},
 
-			// Output
 			Label{Text: "Output:"},
 			TextEdit{
 				AssignTo: &a.outputEdit,
@@ -177,13 +167,11 @@ func (a *App) Run() error {
 func (a *App) onProviderChanged() {
 	provider := a.providerCombo.Text()
 
-	// Toggle URL field (catbox only)
 	a.urlEdit.SetEnabled(provider == "catbox")
 	if provider != "catbox" {
 		a.urlEdit.SetText("")
 	}
 
-	// Toggle album checkbox (catbox only)
 	a.albumCheck.SetEnabled(provider == "catbox")
 	if provider != "catbox" {
 		a.albumCheck.SetChecked(false)
@@ -191,7 +179,6 @@ func (a *App) onProviderChanged() {
 		a.albumCheck.SetChecked(true)
 	}
 
-	// Toggle collection checkbox (sxcu only)
 	a.collectionCheck.SetEnabled(provider == "sxcu")
 	if provider != "sxcu" {
 		a.collectionCheck.SetChecked(false)
@@ -199,16 +186,23 @@ func (a *App) onProviderChanged() {
 		a.collectionCheck.SetChecked(true)
 	}
 
-	// Toggle anonymous checkbox (imgchest only)
 	a.anonymousCheck.SetEnabled(provider == "imgchest")
 	if provider != "imgchest" {
 		a.anonymousCheck.SetChecked(false)
 	}
 
-	// Toggle post ID field (imgchest only)
-	a.postIDEdit.SetEnabled(provider == "imgchest")
+	a.postIDEdit.SetEnabled(provider == "imgchest" && !a.anonymousCheck.Checked())
 	if provider != "imgchest" {
 		a.postIDEdit.SetText("")
+	}
+}
+
+func (a *App) onAnonymousChanged() {
+	if a.providerCombo.Text() == "imgchest" {
+		a.postIDEdit.SetEnabled(!a.anonymousCheck.Checked())
+		if a.anonymousCheck.Checked() {
+			a.postIDEdit.SetText("")
+		}
 	}
 }
 
@@ -239,7 +233,6 @@ func (a *App) onSelectFiles() {
 	}
 	a.fileListModel.PublishItemsReset()
 
-	// Auto-fill title from folder name
 	if a.titleEdit.Text() == "" && len(a.selectedFiles) > 0 {
 		folderPath := filepath.Dir(a.selectedFiles[0])
 		a.titleEdit.SetText(filepath.Base(folderPath))
@@ -258,7 +251,6 @@ func (a *App) onRemoveSelected() {
 		return
 	}
 
-	// Build new list excluding selected indices
 	indexMap := make(map[int]bool)
 	for _, idx := range indices {
 		indexMap[idx] = true
@@ -297,7 +289,6 @@ func (a *App) onUpload() {
 		return
 	}
 
-	// Validate: sxcu and imgchest don't support URL uploads
 	if (provider == "sxcu" || provider == "imgchest") && urls != "" {
 		showError(fmt.Sprintf("%s does not support URL uploads.", provider))
 		return
@@ -318,7 +309,6 @@ func (a *App) onUpload() {
 			}
 		}()
 
-		// Acquire cross-instance upload lock - blocks until we get our turn
 		a.mainWindow.Synchronize(func() {
 			a.uploadButton.SetText("Waiting...")
 		})
@@ -341,6 +331,7 @@ func (a *App) onUpload() {
 		var collectionResult string
 		var postResult string
 		var errors []string
+		var imgchestUploadedCount int
 
 		switch provider {
 		case "catbox":
@@ -352,7 +343,7 @@ func (a *App) onUpload() {
 				})
 			})
 		case "imgchest":
-			results, postResult, errors = a.uploadImgchest(title, anonymous, postID, func(text string) {
+			results, postResult, errors, imgchestUploadedCount = a.uploadImgchest(title, anonymous, postID, func(text string) {
 				a.mainWindow.Synchronize(func() {
 					a.outputEdit.SetText(text)
 				})
@@ -371,7 +362,12 @@ func (a *App) onUpload() {
 					}
 				}
 			}
-			successCount := len(results)
+			var successCount int
+			if provider == "imgchest" {
+				successCount = imgchestUploadedCount
+			} else {
+				successCount = len(results)
+			}
 			failCount := len(errors)
 
 			var output strings.Builder
@@ -412,7 +408,6 @@ func (a *App) uploadCatbox(urls, title, desc string, createAlbum bool) ([]string
 	var errors []string
 	var uploadedFilenames []string
 
-	// Upload files
 	for _, filePath := range a.selectedFiles {
 		url, err := uploadFileToCatbox(filePath)
 		if err != nil {
@@ -423,7 +418,6 @@ func (a *App) uploadCatbox(urls, title, desc string, createAlbum bool) ([]string
 		}
 	}
 
-	// Upload URLs
 	if urls != "" {
 		for _, u := range strings.Split(urls, ",") {
 			u = strings.TrimSpace(u)
@@ -440,7 +434,6 @@ func (a *App) uploadCatbox(urls, title, desc string, createAlbum bool) ([]string
 		}
 	}
 
-	// Create album if requested and we have files
 	if createAlbum && len(uploadedFilenames) > 0 {
 		albumURL, err := createCatboxAlbum(uploadedFilenames, title, desc)
 		if err != nil {
@@ -518,7 +511,6 @@ func (a *App) uploadSxcu(title, desc string, createCollection bool, updateOutput
 		rateLimitStatus = ""
 	}
 
-	// Create collection first if requested
 	if createCollection && len(a.selectedFiles) > 0 {
 		collTitle := title
 		if collTitle == "" {
@@ -534,7 +526,6 @@ func (a *App) uploadSxcu(title, desc string, createCollection bool, updateOutput
 		updateOutput(buildOutput())
 	}
 
-	// Upload files
 	for _, filePath := range a.selectedFiles {
 		for {
 			check := checkSxcuRateLimit(sxcuFileUploadBucket)
@@ -557,20 +548,28 @@ func (a *App) uploadSxcu(title, desc string, createCollection bool, updateOutput
 	return results, collectionResult, errors
 }
 
-func (a *App) uploadImgchest(title string, anonymous bool, postID string, updateOutput func(string)) ([]string, string, []string) {
+func (a *App) uploadImgchest(title string, anonymous bool, postID string, updateOutput func(string)) ([]string, string, []string, int) {
 	var results []string
 	var postResult string
 	var errors []string
 
 	if len(a.selectedFiles) == 0 {
-		return results, postResult, errors
+		return results, postResult, errors, 0
 	}
 
 	totalFiles := len(a.selectedFiles)
 
+	uploadedCount := 0
+	useUploadedCount := false
+
 	buildOutput := func() string {
 		var output strings.Builder
-		successCount := len(results)
+		var successCount int
+		if useUploadedCount {
+			successCount = uploadedCount
+		} else {
+			successCount = len(results)
+		}
 		failCount := len(errors)
 		if failCount > 0 {
 			output.WriteString(fmt.Sprintf("Uploading... %d/%d (%d failed)\r\n\r\n", successCount, totalFiles, failCount))
@@ -589,10 +588,11 @@ func (a *App) uploadImgchest(title string, anonymous bool, postID string, update
 		return output.String()
 	}
 
-	// Adding to existing post - batch if needed
 	if postID != "" {
 		const batchSize = 20
 		totalBatches := (len(a.selectedFiles) + batchSize - 1) / batchSize
+		seenLinks := make(map[string]bool)
+		useUploadedCount = true
 
 		for batchNum := 1; batchNum <= totalBatches; batchNum++ {
 			start := (batchNum - 1) * batchSize
@@ -609,17 +609,19 @@ func (a *App) uploadImgchest(title string, anonymous bool, postID string, update
 				if postResult == "" {
 					postResult = fmt.Sprintf("Post: %s", resp.GetPostURL())
 				}
+				uploadedCount += len(batch)
 				for _, img := range resp.Data.Images {
-					results = append(results, img.Link)
+					if !seenLinks[img.Link] {
+						seenLinks[img.Link] = true
+						results = append(results, img.Link)
+					}
 				}
 			}
 			updateOutput(buildOutput())
 		}
-		return results, postResult, errors
+		return results, postResult, errors, uploadedCount
 	}
 
-	// Create new post with batching and progressive updates
-	// Track which links we've already seen to avoid duplicates from API returning all images
 	seenLinks := make(map[string]bool)
 	callback := func(batchNum int, totalBatches int, postURL string, imageLinks []string, err error) {
 		if err != nil {
@@ -640,5 +642,5 @@ func (a *App) uploadImgchest(title string, anonymous bool, postID string, update
 
 	uploadToImgchestWithCallback(a.selectedFiles, title, anonymous, 3, callback)
 
-	return results, postResult, errors
+	return results, postResult, errors, len(results)
 }
