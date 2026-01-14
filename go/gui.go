@@ -127,6 +127,7 @@ func (a *App) Run() error {
 			CheckBox{
 				AssignTo: &a.collectionCheck,
 				Text:     "Create Collection (sxcu only)",
+				Checked:  true,
 				Enabled:  false,
 			},
 
@@ -194,6 +195,8 @@ func (a *App) onProviderChanged() {
 	a.collectionCheck.SetEnabled(provider == "sxcu")
 	if provider != "sxcu" {
 		a.collectionCheck.SetChecked(false)
+	} else {
+		a.collectionCheck.SetChecked(true)
 	}
 
 	// Toggle anonymous checkbox (imgchest only)
@@ -305,6 +308,24 @@ func (a *App) onUpload() {
 	a.outputEdit.SetText("")
 
 	go func() {
+		// Acquire cross-instance upload lock - blocks until we get our turn
+		a.mainWindow.Synchronize(func() {
+			a.uploadButton.SetText("Waiting...")
+		})
+		if err := AcquireUploadLock(); err != nil {
+			a.mainWindow.Synchronize(func() {
+				a.uploadButton.SetEnabled(true)
+				a.uploadButton.SetText("Upload")
+				a.outputEdit.SetText("Error: Failed to acquire upload lock: " + err.Error())
+			})
+			return
+		}
+		defer ReleaseUploadLock()
+
+		a.mainWindow.Synchronize(func() {
+			a.uploadButton.SetText("Uploading...")
+		})
+
 		var results []string
 		var albumResult string
 		var collectionResult string

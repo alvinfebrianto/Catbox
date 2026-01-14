@@ -102,7 +102,44 @@ func getRateLimitLockPath() string {
 	return filepath.Join(os.TempDir(), "image_uploader_rate_limits.lock")
 }
 
+func getUploadLockPath() string {
+	return filepath.Join(os.TempDir(), "image_uploader_upload.lock")
+}
+
 var lockFile *os.File
+var uploadLockFile *os.File
+
+// AcquireUploadLock acquires a cross-instance exclusive lock for uploads.
+// This ensures only one instance can upload at a time.
+func AcquireUploadLock() error {
+	lockPath := getUploadLockPath()
+	var err error
+	uploadLockFile, err = os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0666)
+	if err != nil {
+		return err
+	}
+	handle := windows.Handle(uploadLockFile.Fd())
+	var overlapped windows.Overlapped
+	// LOCKFILE_EXCLUSIVE_LOCK blocks until the lock is acquired
+	err = windows.LockFileEx(handle, windows.LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, &overlapped)
+	if err != nil {
+		uploadLockFile.Close()
+		uploadLockFile = nil
+		return err
+	}
+	return nil
+}
+
+// ReleaseUploadLock releases the cross-instance upload lock.
+func ReleaseUploadLock() {
+	if uploadLockFile != nil {
+		handle := windows.Handle(uploadLockFile.Fd())
+		var overlapped windows.Overlapped
+		windows.UnlockFileEx(handle, 0, 1, 0, &overlapped)
+		uploadLockFile.Close()
+		uploadLockFile = nil
+	}
+}
 
 func acquireFileLock() error {
 	lockPath := getRateLimitLockPath()
