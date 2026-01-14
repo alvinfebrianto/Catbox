@@ -4,10 +4,14 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/lxn/walk"
 	. "github.com/lxn/walk/declarative"
 )
+
+var timeNow = time.Now
+var timeSleep = time.Sleep
 
 type App struct {
 	mainWindow       *walk.MainWindow
@@ -311,7 +315,11 @@ func (a *App) onUpload() {
 		case "catbox":
 			results, albumResult, errors = a.uploadCatbox(urls, title, desc, createAlbum)
 		case "sxcu":
-			results, collectionResult, errors = a.uploadSxcu(title, desc, createCollection)
+			results, collectionResult, errors = a.uploadSxcu(title, desc, createCollection, func(text string) {
+				a.mainWindow.Synchronize(func() {
+					a.outputEdit.SetText(text)
+				})
+			})
 		case "imgchest":
 			results, postResult, errors = a.uploadImgchest(title, anonymous, postID)
 		}
@@ -410,11 +418,70 @@ func (a *App) uploadCatbox(urls, title, desc string, createAlbum bool) ([]string
 	return results, albumResult, errors
 }
 
-func (a *App) uploadSxcu(title, desc string, createCollection bool) ([]string, string, []string) {
+func (a *App) uploadSxcu(title, desc string, createCollection bool, updateOutput func(string)) ([]string, string, []string) {
 	var results []string
 	var collectionResult string
 	var errors []string
 	var collectionID string
+	var rateLimitStatus string
+
+	totalFiles := len(a.selectedFiles)
+
+	buildOutput := func() string {
+		var output strings.Builder
+		successCount := len(results)
+		failCount := len(errors)
+		if failCount > 0 {
+			output.WriteString(fmt.Sprintf("Uploading... %d/%d (%d failed)\r\n\r\n", successCount, totalFiles, failCount))
+		} else {
+			output.WriteString(fmt.Sprintf("Uploading... %d/%d\r\n\r\n", successCount, totalFiles))
+		}
+		if rateLimitStatus != "" {
+			output.WriteString(rateLimitStatus + "\r\n")
+		}
+		if collectionResult != "" {
+			output.WriteString(collectionResult + "\r\n")
+		}
+		for _, r := range results {
+			output.WriteString(r + "\r\n")
+		}
+		for _, e := range errors {
+			output.WriteString("Error: " + e + "\r\n")
+		}
+		return output.String()
+	}
+
+	waitWithCountdown := func(waitMs int64, bucket string) {
+		friendlyBucket := bucket
+		switch bucket {
+		case "__sxcu_file_upload__":
+			friendlyBucket = "file upload"
+		case "__sxcu_collection__":
+			friendlyBucket = "collection"
+		case "__sxcu_global__":
+			friendlyBucket = "global"
+		}
+		endTime := timeNow().Add(time.Duration(waitMs) * time.Millisecond)
+		for {
+			remaining := endTime.Sub(timeNow())
+			if remaining <= 0 {
+				break
+			}
+			secs := int(remaining.Seconds())
+			if secs >= 60 {
+				rateLimitStatus = fmt.Sprintf("⏳ Rate limited (%s): %dm %ds remaining...", friendlyBucket, secs/60, secs%60)
+			} else {
+				rateLimitStatus = fmt.Sprintf("⏳ Rate limited (%s): %ds remaining...", friendlyBucket, secs)
+			}
+			updateOutput(buildOutput())
+			sleepDuration := 500 * time.Millisecond
+			if remaining < sleepDuration {
+				sleepDuration = remaining
+			}
+			timeSleep(sleepDuration)
+		}
+		rateLimitStatus = ""
+	}
 
 	// Create collection first if requested
 	if createCollection && len(a.selectedFiles) > 0 {
@@ -422,23 +489,34 @@ func (a *App) uploadSxcu(title, desc string, createCollection bool) ([]string, s
 		if collTitle == "" {
 			collTitle = "Untitled"
 		}
-		coll, err := createSxcuCollection(collTitle, desc)
+		coll, err := createSxcuCollection(collTitle, desc, 5)
 		if err != nil {
 			errors = append(errors, fmt.Sprintf("Collection creation: %v", err))
 		} else {
 			collectionID = coll.CollectionID
 			collectionResult = fmt.Sprintf("Collection: %s", coll.GetURL())
 		}
+		updateOutput(buildOutput())
 	}
 
 	// Upload files
 	for _, filePath := range a.selectedFiles {
-		resp, err := uploadFileToSxcu(filePath, collectionID, 3)
+		for {
+			check := checkSxcuRateLimit(sxcuFileUploadBucket)
+			if check.Allowed {
+				break
+			}
+			waitWithCountdown(check.WaitMs, check.Bucket)
+		}
+		resp, err := uploadFileToSxcuWithRateLimitInfo(filePath, collectionID, 5, func(waitMs int64, bucket string) {
+			waitWithCountdown(waitMs, bucket)
+		})
 		if err != nil {
 			errors = append(errors, fmt.Sprintf("%s: %v", filepath.Base(filePath), err))
 		} else {
 			results = append(results, resp.URL)
 		}
+		updateOutput(buildOutput())
 	}
 
 	return results, collectionResult, errors

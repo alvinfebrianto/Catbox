@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
 // Windows API for MessageBox
@@ -44,63 +46,410 @@ func showInfo(message string) {
 }
 
 // Rate limit structures
-type RateLimitInfo struct {
-	Remaining   int   `json:"remaining"`
-	Reset       int64 `json:"reset"`
+type RateLimitEntry struct {
 	Limit       int   `json:"limit"`
+	Remaining   int   `json:"remaining"`
+	ResetAt     int64 `json:"resetAt"`
 	WindowStart int64 `json:"windowStart"`
-	Updated     int64 `json:"updated"`
+	LastUpdated int64 `json:"lastUpdated"`
 }
 
-var (
-	sxcuRateLimit    *RateLimitInfo
-	imgchestRateLimit *RateLimitInfo
-	rateLimitMutex   sync.Mutex
+type SxcuRateLimitState struct {
+	Buckets map[string]*RateLimitEntry `json:"buckets"`
+	Global  *RateLimitEntry            `json:"global"`
+}
+
+type ImgchestRateLimitState struct {
+	Default *RateLimitEntry `json:"default"`
+}
+
+type AllRateLimits struct {
+	Sxcu     SxcuRateLimitState     `json:"sxcu"`
+	Imgchest ImgchestRateLimitState `json:"imgchest"`
+}
+
+const (
+	sxcuGlobalRequestsPerMinute = 240
+	sxcuGlobalWindowMs          = 60000
+	imgchestRequestsPerMinute   = 60
+	imgchestWindowMs            = 60000
 )
 
-func getRateLimitFilePath(provider string) string {
-	return filepath.Join(os.TempDir(), fmt.Sprintf("image_uploader_%s_rate_limit.json", provider))
+const (
+	sxcuFileUploadBucket   = "__sxcu_file_upload__"
+	sxcuCollectionBucket   = "__sxcu_collection__"
+	sxcuGlobalBucket       = "__sxcu_global__"
+)
+
+var (
+	rateLimits     AllRateLimits
+	rateLimitMutex sync.Mutex
+)
+
+func init() {
+	rateLimits = AllRateLimits{
+		Sxcu:     SxcuRateLimitState{Buckets: make(map[string]*RateLimitEntry)},
+		Imgchest: ImgchestRateLimitState{},
+	}
+	loadRateLimitsFromFile()
 }
 
-func loadRateLimitFromFile(provider string) *RateLimitInfo {
-	path := getRateLimitFilePath(provider)
+func getRateLimitFilePath() string {
+	return filepath.Join(os.TempDir(), "image_uploader_rate_limits.json")
+}
+
+func getRateLimitLockPath() string {
+	return filepath.Join(os.TempDir(), "image_uploader_rate_limits.lock")
+}
+
+var lockFile *os.File
+
+func acquireFileLock() error {
+	lockPath := getRateLimitLockPath()
+	var err error
+	lockFile, err = os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0666)
+	if err != nil {
+		return err
+	}
+	handle := windows.Handle(lockFile.Fd())
+	var overlapped windows.Overlapped
+	err = windows.LockFileEx(handle, windows.LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, &overlapped)
+	if err != nil {
+		lockFile.Close()
+		lockFile = nil
+		return err
+	}
+	return nil
+}
+
+func releaseFileLock() {
+	if lockFile != nil {
+		handle := windows.Handle(lockFile.Fd())
+		var overlapped windows.Overlapped
+		windows.UnlockFileEx(handle, 0, 1, 0, &overlapped)
+		lockFile.Close()
+		lockFile = nil
+	}
+}
+
+func loadRateLimitsFromFile() {
+	path := getRateLimitFilePath()
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil
+		return
 	}
-	var info RateLimitInfo
-	if err := json.Unmarshal(data, &info); err != nil {
-		return nil
+	var loaded AllRateLimits
+	if err := json.Unmarshal(data, &loaded); err != nil {
+		return
 	}
-	
-	now := time.Now().Unix()
-	
-	// For sxcu, check if reset time has passed
-	if provider == "sxcu" && info.Reset > 0 && now >= info.Reset {
-		return nil
+	if loaded.Sxcu.Buckets == nil {
+		loaded.Sxcu.Buckets = make(map[string]*RateLimitEntry)
 	}
-	
-	// For imgchest, check if 60 second window has passed
-	if provider == "imgchest" && info.WindowStart > 0 {
-		if now-info.WindowStart >= 60 {
-			return nil
-		}
-	}
-	
-	return &info
+	rateLimits = loaded
+	cleanupExpiredEntries()
 }
 
-func saveRateLimitToFile(provider string, info *RateLimitInfo) {
-	path := getRateLimitFilePath(provider)
-	info.Updated = time.Now().Unix()
-	if provider == "imgchest" && info.WindowStart == 0 {
-		info.WindowStart = time.Now().Unix()
-	}
-	data, err := json.Marshal(info)
+func saveRateLimitsToFile() {
+	path := getRateLimitFilePath()
+	data, err := json.Marshal(rateLimits)
 	if err != nil {
 		return
 	}
 	os.WriteFile(path, data, 0644)
+}
+
+func withFileLock(fn func()) {
+	if err := acquireFileLock(); err == nil {
+		loadRateLimitsFromFile()
+		fn()
+		saveRateLimitsToFile()
+		releaseFileLock()
+	} else {
+		fn()
+	}
+}
+
+func isRateLimitExpired(entry *RateLimitEntry, nowMs int64) bool {
+	return entry == nil || nowMs >= entry.ResetAt
+}
+
+func cleanupExpiredEntries() {
+	nowMs := time.Now().UnixMilli()
+
+	if rateLimits.Imgchest.Default != nil && isRateLimitExpired(rateLimits.Imgchest.Default, nowMs) {
+		rateLimits.Imgchest.Default = nil
+	}
+
+	if rateLimits.Sxcu.Global != nil && isRateLimitExpired(rateLimits.Sxcu.Global, nowMs) {
+		rateLimits.Sxcu.Global = nil
+	}
+
+	for bucket := range rateLimits.Sxcu.Buckets {
+		if isRateLimitExpired(rateLimits.Sxcu.Buckets[bucket], nowMs) {
+			delete(rateLimits.Sxcu.Buckets, bucket)
+		}
+	}
+}
+
+type RateLimitHeaders struct {
+	Limit      int
+	Remaining  int
+	Reset      int64
+	ResetAfter float64
+	Bucket     string
+	IsGlobal   bool
+}
+
+func parseRateLimitHeaders(resp *http.Response) RateLimitHeaders {
+	headers := RateLimitHeaders{Limit: -1, Remaining: -1, Reset: 0, ResetAfter: 0}
+
+	if limit := resp.Header.Get("X-RateLimit-Limit"); limit != "" {
+		headers.Limit, _ = strconv.Atoi(limit)
+	}
+	if remaining := resp.Header.Get("X-RateLimit-Remaining"); remaining != "" {
+		headers.Remaining, _ = strconv.Atoi(remaining)
+	}
+	if reset := resp.Header.Get("X-RateLimit-Reset"); reset != "" {
+		headers.Reset, _ = strconv.ParseInt(reset, 10, 64)
+	}
+	if resetAfter := resp.Header.Get("X-RateLimit-Reset-After"); resetAfter != "" {
+		headers.ResetAfter, _ = strconv.ParseFloat(resetAfter, 64)
+	}
+	if bucket := resp.Header.Get("X-RateLimit-Bucket"); bucket != "" {
+		headers.Bucket = bucket
+	}
+	if resp.Header.Get("X-RateLimit-Global") != "" {
+		headers.IsGlobal = true
+	}
+
+	return headers
+}
+
+func createRateLimitEntry(headers RateLimitHeaders, nowMs int64) *RateLimitEntry {
+	var resetAt int64
+
+	if headers.ResetAfter > 0 {
+		resetAt = nowMs + int64(headers.ResetAfter*1000)
+	} else if headers.Reset > 0 {
+		resetAt = headers.Reset * 1000
+	} else {
+		resetAt = nowMs + 60000
+	}
+
+	limit := headers.Limit
+	if limit <= 0 {
+		limit = 60
+	}
+	remaining := headers.Remaining
+	if remaining < 0 {
+		remaining = limit - 1
+	}
+
+	return &RateLimitEntry{
+		Limit:       limit,
+		Remaining:   remaining,
+		ResetAt:     resetAt,
+		WindowStart: nowMs,
+		LastUpdated: nowMs,
+	}
+}
+
+type RateLimitCheckResult struct {
+	Allowed bool
+	WaitMs  int64
+	Reason  string
+	Bucket  string
+	ResetAt int64
+}
+
+func checkSxcuRateLimitInternal(routeBucket string, nowMs int64) RateLimitCheckResult {
+	cleanupExpiredEntries()
+
+	if rateLimits.Sxcu.Global != nil && !isRateLimitExpired(rateLimits.Sxcu.Global, nowMs) {
+		if rateLimits.Sxcu.Global.Remaining < 1 {
+			waitMs := rateLimits.Sxcu.Global.ResetAt - nowMs + 100
+			if waitMs < 100 {
+				waitMs = 100
+			}
+			return RateLimitCheckResult{
+				Allowed: false,
+				WaitMs:  waitMs,
+				Reason:  "global",
+				Bucket:  sxcuGlobalBucket,
+				ResetAt: rateLimits.Sxcu.Global.ResetAt,
+			}
+		}
+	}
+
+	if routeBucket != "" {
+		if entry, ok := rateLimits.Sxcu.Buckets[routeBucket]; ok && !isRateLimitExpired(entry, nowMs) {
+			if entry.Remaining < 1 {
+				waitMs := entry.ResetAt - nowMs + 100
+				if waitMs < 100 {
+					waitMs = 100
+				}
+				return RateLimitCheckResult{
+					Allowed: false,
+					WaitMs:  waitMs,
+					Reason:  "bucket",
+					Bucket:  routeBucket,
+					ResetAt: entry.ResetAt,
+				}
+			}
+		}
+	}
+
+	return RateLimitCheckResult{Allowed: true, WaitMs: 0}
+}
+
+func checkSxcuRateLimit(routeBucket string) RateLimitCheckResult {
+	rateLimitMutex.Lock()
+	defer rateLimitMutex.Unlock()
+
+	var result RateLimitCheckResult
+	withFileLock(func() {
+		nowMs := time.Now().UnixMilli()
+		result = checkSxcuRateLimitInternal(routeBucket, nowMs)
+	})
+	return result
+}
+
+func updateSxcuRateLimitInternal(routeBucket string, headers RateLimitHeaders, isGlobalError bool, isRateLimitError bool, nowMs int64) {
+	if isGlobalError || headers.IsGlobal {
+		rateLimits.Sxcu.Global = &RateLimitEntry{
+			Limit:       sxcuGlobalRequestsPerMinute,
+			Remaining:   0,
+			ResetAt:     createRateLimitEntry(headers, nowMs).ResetAt,
+			WindowStart: nowMs,
+			LastUpdated: nowMs,
+		}
+	} else {
+		if rateLimits.Sxcu.Global != nil && !isRateLimitExpired(rateLimits.Sxcu.Global, nowMs) {
+			rateLimits.Sxcu.Global.Remaining--
+			if rateLimits.Sxcu.Global.Remaining < 0 {
+				rateLimits.Sxcu.Global.Remaining = 0
+			}
+			rateLimits.Sxcu.Global.LastUpdated = nowMs
+		} else {
+			rateLimits.Sxcu.Global = &RateLimitEntry{
+				Limit:       sxcuGlobalRequestsPerMinute,
+				Remaining:   sxcuGlobalRequestsPerMinute - 1,
+				ResetAt:     nowMs + sxcuGlobalWindowMs,
+				WindowStart: nowMs,
+				LastUpdated: nowMs,
+			}
+		}
+	}
+
+	if headers.Bucket != "" && headers.Limit >= 0 && headers.Remaining >= 0 {
+		rateLimits.Sxcu.Buckets[headers.Bucket] = createRateLimitEntry(headers, nowMs)
+	}
+
+	if routeBucket != "" {
+		entry, ok := rateLimits.Sxcu.Buckets[routeBucket]
+		if !ok || isRateLimitExpired(entry, nowMs) {
+			if headers.Limit > 0 && headers.Remaining >= 0 {
+				rateLimits.Sxcu.Buckets[routeBucket] = createRateLimitEntry(headers, nowMs)
+			}
+		} else if !isRateLimitError {
+			entry.Remaining--
+			if entry.Remaining < 0 {
+				entry.Remaining = 0
+			}
+			entry.LastUpdated = nowMs
+		} else {
+			entry.Remaining = 0
+			entry.LastUpdated = nowMs
+			if headers.ResetAfter > 0 {
+				entry.ResetAt = nowMs + int64(headers.ResetAfter*1000)
+			} else if headers.Reset > 0 {
+				entry.ResetAt = headers.Reset * 1000
+			}
+		}
+	}
+}
+
+func updateSxcuRateLimit(routeBucket string, headers RateLimitHeaders, isGlobalError bool, isRateLimitError bool) {
+	rateLimitMutex.Lock()
+	defer rateLimitMutex.Unlock()
+
+	withFileLock(func() {
+		nowMs := time.Now().UnixMilli()
+		updateSxcuRateLimitInternal(routeBucket, headers, isGlobalError, isRateLimitError, nowMs)
+	})
+}
+
+func checkImgchestRateLimitInternal(nowMs int64) RateLimitCheckResult {
+	cleanupExpiredEntries()
+
+	entry := rateLimits.Imgchest.Default
+	if entry == nil || isRateLimitExpired(entry, nowMs) {
+		return RateLimitCheckResult{Allowed: true, WaitMs: 0}
+	}
+
+	if entry.Remaining < 1 {
+		waitMs := entry.ResetAt - nowMs + 100
+		if waitMs < 100 {
+			waitMs = 100
+		}
+		return RateLimitCheckResult{
+			Allowed: false,
+			WaitMs:  waitMs,
+			Reason:  "bucket",
+			ResetAt: entry.ResetAt,
+		}
+	}
+
+	return RateLimitCheckResult{Allowed: true, WaitMs: 0}
+}
+
+func checkImgchestRateLimit() RateLimitCheckResult {
+	rateLimitMutex.Lock()
+	defer rateLimitMutex.Unlock()
+
+	var result RateLimitCheckResult
+	withFileLock(func() {
+		nowMs := time.Now().UnixMilli()
+		result = checkImgchestRateLimitInternal(nowMs)
+	})
+	return result
+}
+
+func updateImgchestRateLimitInternal(headers RateLimitHeaders, nowMs int64) {
+	if headers.Limit >= 0 && headers.Remaining >= 0 {
+		rateLimits.Imgchest.Default = &RateLimitEntry{
+			Limit:       headers.Limit,
+			Remaining:   headers.Remaining,
+			ResetAt:     nowMs + imgchestWindowMs,
+			WindowStart: nowMs,
+			LastUpdated: nowMs,
+		}
+	} else if rateLimits.Imgchest.Default != nil {
+		rateLimits.Imgchest.Default.Remaining--
+		if rateLimits.Imgchest.Default.Remaining < 0 {
+			rateLimits.Imgchest.Default.Remaining = 0
+		}
+		rateLimits.Imgchest.Default.LastUpdated = nowMs
+	}
+}
+
+func updateImgchestRateLimit(headers RateLimitHeaders) {
+	rateLimitMutex.Lock()
+	defer rateLimitMutex.Unlock()
+
+	withFileLock(func() {
+		nowMs := time.Now().UnixMilli()
+		updateImgchestRateLimitInternal(headers, nowMs)
+	})
+}
+
+func calculateExponentialBackoff(attempt int, baseDelayMs, maxDelayMs int64) time.Duration {
+	delay := baseDelayMs * (1 << attempt)
+	if delay > maxDelayMs {
+		delay = maxDelayMs
+	}
+	jitter := time.Duration(time.Now().UnixNano()%500) * time.Millisecond
+	return time.Duration(delay)*time.Millisecond + jitter
 }
 
 // Allowed file types for sxcu
@@ -265,9 +614,17 @@ func uploadFileToSxcu(filePath, collectionID string, maxRetries int) (*SxcuRespo
 	}
 
 	var lastErr error
-	baseDelay := 2 * time.Second
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
+		check := checkSxcuRateLimit(sxcuFileUploadBucket)
+		if !check.Allowed {
+			if attempt >= maxRetries {
+				return nil, fmt.Errorf("rate limit exceeded, retry after %dms", check.WaitMs)
+			}
+			time.Sleep(time.Duration(check.WaitMs) * time.Millisecond)
+			continue
+		}
+
 		file, err := os.Open(filePath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to open file: %w", err)
@@ -304,20 +661,12 @@ func uploadFileToSxcu(filePath, collectionID string, maxRetries int) (*SxcuRespo
 		resp, err := httpClient.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("request failed: %w", err)
+			backoff := calculateExponentialBackoff(attempt, 1000, 120000)
+			time.Sleep(backoff)
 			continue
 		}
 
-		// Parse rate limit headers
-		if remaining := resp.Header.Get("X-RateLimit-Remaining"); remaining != "" {
-			if reset := resp.Header.Get("X-RateLimit-Reset"); reset != "" {
-				rateLimitMutex.Lock()
-				rem, _ := strconv.Atoi(remaining)
-				res, _ := strconv.ParseInt(reset, 10, 64)
-				sxcuRateLimit = &RateLimitInfo{Remaining: rem, Reset: res}
-				saveRateLimitToFile("sxcu", sxcuRateLimit)
-				rateLimitMutex.Unlock()
-			}
-		}
+		headers := parseRateLimitHeaders(resp)
 
 		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
@@ -331,14 +680,26 @@ func uploadFileToSxcu(filePath, collectionID string, maxRetries int) (*SxcuRespo
 			return nil, fmt.Errorf("failed to parse response: %w", err)
 		}
 
-		if result.Error != "" {
-			// Rate limit error (code 815)
-			if result.Code == 815 && attempt < maxRetries {
-				delay := baseDelay * time.Duration(1<<attempt)
-				time.Sleep(delay)
-				lastErr = fmt.Errorf("rate limit hit: %s", result.Error)
+		isGlobalError := resp.StatusCode == 429 && (headers.IsGlobal || result.Code == 2)
+		isRateLimitError := resp.StatusCode == 429 || result.Code == 815 || result.Code == 185
+
+		updateSxcuRateLimit(sxcuFileUploadBucket, headers, isGlobalError, isRateLimitError)
+
+		if isRateLimitError {
+			if attempt < maxRetries {
+				check := checkSxcuRateLimit(sxcuFileUploadBucket)
+				waitMs := check.WaitMs
+				if waitMs <= 0 {
+					waitMs = int64(calculateExponentialBackoff(attempt, 1000, 120000) / time.Millisecond)
+				}
+				time.Sleep(time.Duration(waitMs) * time.Millisecond)
+				lastErr = fmt.Errorf("rate limit hit: %s (code: %d)", result.Error, result.Code)
 				continue
 			}
+			return nil, fmt.Errorf("API error: %s (code: %d)", result.Error, result.Code)
+		}
+
+		if result.Error != "" {
 			return nil, fmt.Errorf("API error: %s (code: %d)", result.Error, result.Code)
 		}
 
@@ -351,44 +712,208 @@ func uploadFileToSxcu(filePath, collectionID string, maxRetries int) (*SxcuRespo
 	return nil, fmt.Errorf("max retries exceeded")
 }
 
-func createSxcuCollection(title, desc string) (*SxcuCollectionResponse, error) {
-	var buf bytes.Buffer
-	writer := multipart.NewWriter(&buf)
-
-	writer.WriteField("title", title)
-	writer.WriteField("desc", desc)
-	writer.WriteField("private", "false")
-	writer.WriteField("unlisted", "false")
-	writer.Close()
-
-	req, err := http.NewRequest("POST", "https://sxcu.net/api/collections/create", &buf)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("User-Agent", "ImageUploader/1.0 (+https://github.com)")
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
+func uploadFileToSxcuWithRateLimitInfo(filePath, collectionID string, maxRetries int, onRateLimitWait func(waitMs int64, bucket string)) (*SxcuResponse, error) {
+	if !isSxcuAllowedFileType(filePath) {
+		ext := filepath.Ext(filePath)
+		return nil, fmt.Errorf("file type '%s' is not allowed for sxcu.net", ext)
 	}
 
-	var result SxcuCollectionResponse
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+	var lastErr error
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		check := checkSxcuRateLimit(sxcuFileUploadBucket)
+		if !check.Allowed {
+			if attempt >= maxRetries {
+				return nil, fmt.Errorf("rate limit exceeded, retry after %dms", check.WaitMs)
+			}
+			if onRateLimitWait != nil {
+				bucket := check.Bucket
+				if bucket == "" {
+					bucket = sxcuFileUploadBucket
+				}
+				onRateLimitWait(check.WaitMs, bucket)
+			} else {
+				time.Sleep(time.Duration(check.WaitMs) * time.Millisecond)
+			}
+			continue
+		}
+
+		file, err := os.Open(filePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open file: %w", err)
+		}
+
+		var buf bytes.Buffer
+		writer := multipart.NewWriter(&buf)
+
+		part, err := writer.CreateFormFile("file", filepath.Base(filePath))
+		if err != nil {
+			file.Close()
+			return nil, fmt.Errorf("failed to create form file: %w", err)
+		}
+
+		if _, err := io.Copy(part, file); err != nil {
+			file.Close()
+			return nil, fmt.Errorf("failed to copy file data: %w", err)
+		}
+
+		writer.WriteField("noembed", "")
+		if collectionID != "" {
+			writer.WriteField("collection", collectionID)
+		}
+		writer.Close()
+		file.Close()
+
+		req, err := http.NewRequest("POST", "https://sxcu.net/api/files/create", &buf)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		req.Header.Set("User-Agent", "ImageUploader/1.0 (+https://github.com)")
+
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("request failed: %w", err)
+			backoff := calculateExponentialBackoff(attempt, 1000, 120000)
+			time.Sleep(backoff)
+			continue
+		}
+
+		headers := parseRateLimitHeaders(resp)
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			lastErr = fmt.Errorf("failed to read response: %w", err)
+			continue
+		}
+
+		var result SxcuResponse
+		if err := json.Unmarshal(body, &result); err != nil {
+			return nil, fmt.Errorf("failed to parse response: %w", err)
+		}
+
+		isGlobalError := resp.StatusCode == 429 && (headers.IsGlobal || result.Code == 2)
+		isRateLimitError := resp.StatusCode == 429 || result.Code == 815 || result.Code == 185
+
+		updateSxcuRateLimit(sxcuFileUploadBucket, headers, isGlobalError, isRateLimitError)
+
+		if isRateLimitError {
+			if attempt < maxRetries {
+				check := checkSxcuRateLimit(sxcuFileUploadBucket)
+				waitMs := check.WaitMs
+				if waitMs <= 0 {
+					waitMs = int64(calculateExponentialBackoff(attempt, 1000, 120000) / time.Millisecond)
+				}
+				bucket := check.Bucket
+				if bucket == "" {
+					bucket = sxcuFileUploadBucket
+				}
+				if onRateLimitWait != nil {
+					onRateLimitWait(waitMs, bucket)
+				} else {
+					time.Sleep(time.Duration(waitMs) * time.Millisecond)
+				}
+				lastErr = fmt.Errorf("rate limit hit: %s (code: %d)", result.Error, result.Code)
+				continue
+			}
+			return nil, fmt.Errorf("API error: %s (code: %d)", result.Error, result.Code)
+		}
+
+		if result.Error != "" {
+			return nil, fmt.Errorf("API error: %s (code: %d)", result.Error, result.Code)
+		}
+
+		return &result, nil
 	}
 
-	if result.Error != "" {
-		return nil, fmt.Errorf("API error: %s (code: %d)", result.Error, result.Code)
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("max retries exceeded")
+}
+
+func createSxcuCollection(title, desc string, maxRetries int) (*SxcuCollectionResponse, error) {
+	var lastErr error
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		check := checkSxcuRateLimit(sxcuCollectionBucket)
+		if !check.Allowed {
+			if attempt >= maxRetries {
+				return nil, fmt.Errorf("rate limit exceeded, retry after %dms", check.WaitMs)
+			}
+			time.Sleep(time.Duration(check.WaitMs) * time.Millisecond)
+			continue
+		}
+
+		var buf bytes.Buffer
+		writer := multipart.NewWriter(&buf)
+
+		writer.WriteField("title", title)
+		writer.WriteField("desc", desc)
+		writer.WriteField("private", "false")
+		writer.WriteField("unlisted", "false")
+		writer.Close()
+
+		req, err := http.NewRequest("POST", "https://sxcu.net/api/collections/create", &buf)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		req.Header.Set("User-Agent", "ImageUploader/1.0 (+https://github.com)")
+
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("request failed: %w", err)
+			backoff := calculateExponentialBackoff(attempt, 1000, 120000)
+			time.Sleep(backoff)
+			continue
+		}
+
+		headers := parseRateLimitHeaders(resp)
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			lastErr = fmt.Errorf("failed to read response: %w", err)
+			continue
+		}
+
+		var result SxcuCollectionResponse
+		if err := json.Unmarshal(body, &result); err != nil {
+			return nil, fmt.Errorf("failed to parse response: %w", err)
+		}
+
+		isGlobalError := resp.StatusCode == 429 && (headers.IsGlobal || result.Code == 2)
+		isRateLimitError := resp.StatusCode == 429 || result.Code == 19
+
+		updateSxcuRateLimit(sxcuCollectionBucket, headers, isGlobalError, isRateLimitError)
+
+		if isRateLimitError {
+			if attempt < maxRetries {
+				check := checkSxcuRateLimit(sxcuCollectionBucket)
+				waitMs := check.WaitMs
+				if waitMs <= 0 {
+					waitMs = int64(calculateExponentialBackoff(attempt, 1000, 120000) / time.Millisecond)
+				}
+				time.Sleep(time.Duration(waitMs) * time.Millisecond)
+				lastErr = fmt.Errorf("rate limit hit: %s (code: %d)", result.Error, result.Code)
+				continue
+			}
+			return nil, fmt.Errorf("API error: %s (code: %d)", result.Error, result.Code)
+		}
+
+		if result.Error != "" {
+			return nil, fmt.Errorf("API error: %s (code: %d)", result.Error, result.Code)
+		}
+
+		return &result, nil
 	}
 
-	return &result, nil
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("max retries exceeded")
 }
 
 // imgchest API
@@ -444,9 +969,16 @@ func uploadToImgchest(filePaths []string, title string, anonymous bool, maxRetri
 	}
 
 	var lastErr error
-	baseDelay := 2 * time.Second
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
+		check := checkImgchestRateLimit()
+		if !check.Allowed {
+			if attempt >= maxRetries {
+				return nil, fmt.Errorf("rate limit exceeded, retry after %dms", check.WaitMs)
+			}
+			time.Sleep(time.Duration(check.WaitMs) * time.Millisecond)
+		}
+
 		var buf bytes.Buffer
 		writer := multipart.NewWriter(&buf)
 
@@ -490,21 +1022,13 @@ func uploadToImgchest(filePaths []string, title string, anonymous bool, maxRetri
 		resp, err := httpClient.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("request failed: %w", err)
+			backoff := calculateExponentialBackoff(attempt, 1000, 120000)
+			time.Sleep(backoff)
 			continue
 		}
 
-		// Parse rate limit headers
-		if remaining := resp.Header.Get("X-RateLimit-Remaining"); remaining != "" {
-			rateLimitMutex.Lock()
-			rem, _ := strconv.Atoi(remaining)
-			limit := 60
-			if l := resp.Header.Get("X-RateLimit-Limit"); l != "" {
-				limit, _ = strconv.Atoi(l)
-			}
-			imgchestRateLimit = &RateLimitInfo{Remaining: rem, Limit: limit, WindowStart: time.Now().Unix()}
-			saveRateLimitToFile("imgchest", imgchestRateLimit)
-			rateLimitMutex.Unlock()
-		}
+		headers := parseRateLimitHeaders(resp)
+		updateImgchestRateLimit(headers)
 
 		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
@@ -513,12 +1037,18 @@ func uploadToImgchest(filePaths []string, title string, anonymous bool, maxRetri
 			continue
 		}
 
-		// Check for rate limit
-		if resp.StatusCode == 429 && attempt < maxRetries {
-			delay := baseDelay * time.Duration(1<<attempt)
-			time.Sleep(delay)
-			lastErr = fmt.Errorf("rate limit exceeded")
-			continue
+		if resp.StatusCode == 429 {
+			if attempt < maxRetries {
+				check := checkImgchestRateLimit()
+				waitMs := check.WaitMs
+				if waitMs <= 0 {
+					waitMs = int64(calculateExponentialBackoff(attempt, 1000, 120000) / time.Millisecond)
+				}
+				time.Sleep(time.Duration(waitMs) * time.Millisecond)
+				lastErr = fmt.Errorf("rate limit exceeded")
+				continue
+			}
+			return nil, fmt.Errorf("rate limit exceeded")
 		}
 
 		var result ImgchestPostResponse
@@ -546,9 +1076,16 @@ func addToImgchestPost(postID string, filePaths []string, maxRetries int) (*Imgc
 	}
 
 	var lastErr error
-	baseDelay := 2 * time.Second
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
+		check := checkImgchestRateLimit()
+		if !check.Allowed {
+			if attempt >= maxRetries {
+				return nil, fmt.Errorf("rate limit exceeded, retry after %dms", check.WaitMs)
+			}
+			time.Sleep(time.Duration(check.WaitMs) * time.Millisecond)
+		}
+
 		var buf bytes.Buffer
 		writer := multipart.NewWriter(&buf)
 
@@ -584,21 +1121,13 @@ func addToImgchestPost(postID string, filePaths []string, maxRetries int) (*Imgc
 		resp, err := httpClient.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("request failed: %w", err)
+			backoff := calculateExponentialBackoff(attempt, 1000, 120000)
+			time.Sleep(backoff)
 			continue
 		}
 
-		// Parse rate limit headers
-		if remaining := resp.Header.Get("X-RateLimit-Remaining"); remaining != "" {
-			rateLimitMutex.Lock()
-			rem, _ := strconv.Atoi(remaining)
-			limit := 60
-			if l := resp.Header.Get("X-RateLimit-Limit"); l != "" {
-				limit, _ = strconv.Atoi(l)
-			}
-			imgchestRateLimit = &RateLimitInfo{Remaining: rem, Limit: limit, WindowStart: time.Now().Unix()}
-			saveRateLimitToFile("imgchest", imgchestRateLimit)
-			rateLimitMutex.Unlock()
-		}
+		headers := parseRateLimitHeaders(resp)
+		updateImgchestRateLimit(headers)
 
 		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
@@ -607,12 +1136,18 @@ func addToImgchestPost(postID string, filePaths []string, maxRetries int) (*Imgc
 			continue
 		}
 
-		// Check for rate limit
-		if resp.StatusCode == 429 && attempt < maxRetries {
-			delay := baseDelay * time.Duration(1<<attempt)
-			time.Sleep(delay)
-			lastErr = fmt.Errorf("rate limit exceeded")
-			continue
+		if resp.StatusCode == 429 {
+			if attempt < maxRetries {
+				check := checkImgchestRateLimit()
+				waitMs := check.WaitMs
+				if waitMs <= 0 {
+					waitMs = int64(calculateExponentialBackoff(attempt, 1000, 120000) / time.Millisecond)
+				}
+				time.Sleep(time.Duration(waitMs) * time.Millisecond)
+				lastErr = fmt.Errorf("rate limit exceeded")
+				continue
+			}
+			return nil, fmt.Errorf("rate limit exceeded")
 		}
 
 		var result ImgchestPostResponse
