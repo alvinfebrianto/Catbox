@@ -28,7 +28,7 @@
      [string]$PostId = ""
  )
 
-function Upload-FileToCatbox {
+function Upload-FileToImageUploader {
     param(
         [Parameter(Mandatory=$true)] [string]$Path
     )
@@ -48,7 +48,7 @@ function Upload-FileToCatbox {
     }
 }
 
-function Upload-UrlToCatbox {
+function Upload-UrlToImageUploader {
     param(
         [Parameter(Mandatory=$true)] [string]$Url
     )
@@ -89,7 +89,7 @@ function Create-AnonymousAlbum {
 
 function Get-SxcuRateLimitFromFile {
     param()
-    $rateLimitFile = Join-Path $env:TEMP "catbox_sxcu_rate_limit.json"
+    $rateLimitFile = Join-Path $env:TEMP "image_uploader_sxcu_rate_limit.json"
     $retryCount = 0
     $maxRetries = 3
 
@@ -146,7 +146,7 @@ function Set-SxcuRateLimitToFile {
         [int]$Remaining,
         [int]$Reset
     )
-    $rateLimitFile = Join-Path $env:TEMP "catbox_sxcu_rate_limit.json"
+    $rateLimitFile = Join-Path $env:TEMP "image_uploader_sxcu_rate_limit.json"
     $retryCount = 0
     $maxRetries = 3
 
@@ -315,7 +315,7 @@ function Create-SxcuCollection {
 }
 
 function Clear-SxcuRateLimitFile {
-    $rateLimitFile = Join-Path $env:TEMP "catbox_sxcu_rate_limit.json"
+    $rateLimitFile = Join-Path $env:TEMP "image_uploader_sxcu_rate_limit.json"
     $lockFile = $rateLimitFile + ".lock"
     $lockAcquired = $false
     
@@ -347,7 +347,7 @@ function Clear-SxcuRateLimitFile {
 function Get-ImgchestToken {
     $token = $env:IMGCHEST_API_TOKEN
     if (-not $token) {
-        $configFile = Join-Path $env:APPDATA "catbox_imgchest_token.txt"
+        $configFile = Join-Path $env:APPDATA "image_uploader_imgchest_token.txt"
         if (Test-Path $configFile) {
             $token = Get-Content $configFile -Raw | ForEach-Object { $_.Trim() }
         }
@@ -360,7 +360,7 @@ function Get-ImgchestToken {
 
 function Get-ImgchestRateLimitFromFile {
     param()
-    $rateLimitFile = Join-Path $env:TEMP "catbox_imgchest_rate_limit.json"
+    $rateLimitFile = Join-Path $env:TEMP "image_uploader_imgchest_rate_limit.json"
     $retryCount = 0
     $maxRetries = 3
 
@@ -431,7 +431,7 @@ function Set-ImgchestRateLimitToFile {
         [int]$Remaining,
         [int]$Limit
     )
-    $rateLimitFile = Join-Path $env:TEMP "catbox_imgchest_rate_limit.json"
+    $rateLimitFile = Join-Path $env:TEMP "image_uploader_imgchest_rate_limit.json"
     $retryCount = 0
     $maxRetries = 3
 
@@ -484,7 +484,7 @@ function Set-ImgchestRateLimitToFile {
 }
 
 function Clear-ImgchestRateLimitFile {
-    $rateLimitFile = Join-Path $env:TEMP "catbox_imgchest_rate_limit.json"
+    $rateLimitFile = Join-Path $env:TEMP "image_uploader_imgchest_rate_limit.json"
     $lockFile = $rateLimitFile + ".lock"
     $lockAcquired = $false
     
@@ -517,7 +517,7 @@ function Wait-ImgchestRateLimit {
         [int]$Cost = 1
     )
 
-    $rateLimitFile = Join-Path $env:TEMP "catbox_imgchest_rate_limit.json"
+    $rateLimitFile = Join-Path $env:TEMP "image_uploader_imgchest_rate_limit.json"
     $lockFile = $rateLimitFile + ".lock"
     $lockAcquired = $false
     $maxWaitTime = 30
@@ -785,7 +785,7 @@ function Add-ImagesToImgchestPost {
 }
 
 
-function Invoke-CatboxUpload {
+function Invoke-ImageUpload {
     param(
         [string[]]$Files,
         [string[]]$Urls,
@@ -829,7 +829,7 @@ function Invoke-CatboxUpload {
             # Acquire cross-process mutex for sxcu - extended scope for entire upload process
             try {
                 Write-Host "Waiting for sxcu upload slot..."
-                $mutex = New-Object System.Threading.Mutex($false, "Global\CatboxSxcuUploadMutex")
+                $mutex = New-Object System.Threading.Mutex($false, "Global\ImageUploaderSxcuUploadMutex")
                 $hasHandle = $mutex.WaitOne()
                 if (-not $hasHandle) {
                     throw "Could not acquire sxcu upload lock."
@@ -857,7 +857,7 @@ function Invoke-CatboxUpload {
             # Still need mutex for individual uploads
             try {
                 Write-Host "Waiting for sxcu upload slot..."
-                $mutex = New-Object System.Threading.Mutex($false, "Global\CatboxSxcuUploadMutex")
+                $mutex = New-Object System.Threading.Mutex($false, "Global\ImageUploaderSxcuUploadMutex")
                 $hasHandle = $mutex.WaitOne()
                 if (-not $hasHandle) {
                     throw "Could not acquire sxcu upload lock."
@@ -881,7 +881,7 @@ function Invoke-CatboxUpload {
 
         try {
             Write-Host "Waiting for imgchest upload slot..."
-            $mutex = New-Object System.Threading.Mutex($false, "Global\CatboxImgchestUploadMutex")
+            $mutex = New-Object System.Threading.Mutex($false, "Global\ImageUploaderImgchestUploadMutex")
             $hasHandle = $mutex.WaitOne()
             if (-not $hasHandle) {
                 throw "Could not acquire imgchest upload lock."
@@ -1064,7 +1064,7 @@ function Invoke-CatboxUpload {
                         # So we'll collect all files and create one post at the end
                     } else {
 
-                        $fileUrl = Upload-FileToCatbox -Path $filePath
+                        $fileUrl = Upload-FileToImageUploader -Path $filePath
                         $uploadedUrls += $fileUrl
                         $output += "$fileUrl"
                         Write-Host "$fileUrl"
@@ -1215,7 +1215,7 @@ function Invoke-CatboxUpload {
 
                 foreach ($inputUrl in $Urls) {
                     try {
-                        $uploadUrl = Upload-UrlToCatbox -Url $inputUrl
+                        $uploadUrl = Upload-UrlToImageUploader -Url $inputUrl
                         $uploadedUrls += $uploadUrl
                         $output += "$uploadUrl"
                         Write-Host "$uploadUrl"
@@ -1280,103 +1280,245 @@ if (-not $Files -and -not $Urls) {
         $selectedFiles = @()
         $script:uploadCompleted = $false
         $form = New-Object System.Windows.Forms.Form
-        $form.Text = "File Uploader"
-        $form.Size = New-Object System.Drawing.Size(400,680)
+        $form.Text = "Image Uploader"
+        $form.Size = New-Object System.Drawing.Size(380,520)
         $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::Sizable
-        $form.MinimumSize = New-Object System.Drawing.Size(400,680)
+        $form.MinimumSize = New-Object System.Drawing.Size(360,480)
+        $form.Padding = New-Object System.Windows.Forms.Padding(12)
+        $form.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 
-        # Provider selection
+        $margin = 12
+        $spacing = 8
+        $rowHeight = 24
+        $currentY = $margin
+
+        # === Header row: Provider + Add/Remove buttons ===
         $providerLabel = New-Object System.Windows.Forms.Label
         $providerLabel.Text = "Provider:"
-        $providerLabel.Location = New-Object System.Drawing.Point(10,10)
-        $providerLabel.Size = New-Object System.Drawing.Size(80,20)
-        $providerLabel.Font = New-Object System.Drawing.Font("Microsoft Sans Serif", 8.25)
+        $providerLabel.Location = New-Object System.Drawing.Point($margin, ($currentY + 3))
+        $providerLabel.Size = New-Object System.Drawing.Size(55, $rowHeight)
+        $providerLabel.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
         $form.Controls.Add($providerLabel)
 
         $providerComboBox = New-Object System.Windows.Forms.ComboBox
         $providerComboBox.Items.AddRange(@("catbox", "sxcu", "imgchest"))
         $providerComboBox.SelectedIndex = 2
-        $providerComboBox.Location = New-Object System.Drawing.Point(95,8)
-        $providerComboBox.Size = New-Object System.Drawing.Size(275,20)
-
-        
-        # Helper to toggle URL fields based on provider
-        $toggleUrlFields = {
-            if ($providerComboBox.SelectedItem -eq "sxcu" -or $providerComboBox.SelectedItem -eq "imgchest") {
-                $urlLabel.Enabled = $false
-                $urlTextBox.Enabled = $false
-                $urlTextBox.Text = ""
-            } else {
-                $urlLabel.Enabled = $true
-                $urlTextBox.Enabled = $true
-            }
-        }
-
-
-        $providerComboBox.Add_SelectedIndexChanged($toggleUrlFields)
+        $providerComboBox.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+        $providerComboBox.Location = New-Object System.Drawing.Point(($margin + 55 + 6), $currentY)
+        $providerComboBox.Size = New-Object System.Drawing.Size(90, $rowHeight)
         $form.Controls.Add($providerComboBox)
 
-        # Create collection checkbox
-        $createCollectionCheckbox = New-Object System.Windows.Forms.CheckBox
-        $createCollectionCheckbox.Text = "Create collection"
-        $createCollectionCheckbox.Location = New-Object System.Drawing.Point(10,355)
-        $createCollectionCheckbox.Size = New-Object System.Drawing.Size(150,20)
-        $createCollectionCheckbox.Checked = $false
-
-        # Helper to toggle collection checkbox based on provider
-        $toggleCollectionCheckbox = {
-            $createCollectionCheckbox.Enabled = ($providerComboBox.SelectedItem -eq "sxcu")
-        }
-        $providerComboBox.Add_SelectedIndexChanged($toggleCollectionCheckbox)
-        $form.Controls.Add($createCollectionCheckbox)
-        
-        # Anonymous checkbox for imgchest
-        $anonymousCheckbox = New-Object System.Windows.Forms.CheckBox
-        $anonymousCheckbox.Text = "Anonymous"
-        $anonymousCheckbox.Location = New-Object System.Drawing.Point(10,380)
-        $anonymousCheckbox.Size = New-Object System.Drawing.Size(150,20)
-        $anonymousCheckbox.Checked = $false
-        
-        # Helper to toggle anonymous checkbox based on provider
-        $toggleAnonymousCheckbox = {
-            $anonymousCheckbox.Enabled = ($providerComboBox.SelectedItem -eq "imgchest")
-        }
-        $providerComboBox.Add_SelectedIndexChanged($toggleAnonymousCheckbox)
-        $form.Controls.Add($anonymousCheckbox)
-
-        # Post ID text box
-        $postIdLabel = New-Object System.Windows.Forms.Label
-        $postIdLabel.Text = "Post ID (to add to existing):"
-        $postIdLabel.Location = New-Object System.Drawing.Point(10,405)
-        $postIdLabel.Size = New-Object System.Drawing.Size(200,20)
-        $postIdLabel.Font = New-Object System.Drawing.Font("Microsoft Sans Serif", 8.25)
-        $form.Controls.Add($postIdLabel)
-
-        $postIdTextBox = New-Object System.Windows.Forms.TextBox
-        $postIdTextBox.Location = New-Object System.Drawing.Point(10,425)
-        $postIdTextBox.Size = New-Object System.Drawing.Size(360,20)
-        $postIdTextBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
-        $form.Controls.Add($postIdTextBox)
-
-        # Helper to toggle post ID field based on provider
-        $togglePostIdField = {
-            $postIdLabel.Enabled = ($providerComboBox.SelectedItem -eq "imgchest")
-            $postIdTextBox.Enabled = ($providerComboBox.SelectedItem -eq "imgchest")
-            if ($postIdTextBox.Text -and $providerComboBox.SelectedItem -eq "imgchest") {
-                $anonymousCheckbox.Enabled = $false
-                $anonymousCheckbox.Checked = $false
-            } elseif ($providerComboBox.SelectedItem -eq "imgchest") {
-                $anonymousCheckbox.Enabled = $true
-            }
-        }
-        $providerComboBox.Add_SelectedIndexChanged($togglePostIdField)
-        $postIdTextBox.Add_TextChanged($togglePostIdField)
-
-        # File button
+        $removeFileButton = New-Object System.Windows.Forms.Button
+        $removeFileButton.Text = [char]0x2715 + " Remove"
+        $removeFileButton.Size = New-Object System.Drawing.Size(80, 26)
+        $removeFileButton.Location = New-Object System.Drawing.Point((380 - $margin - 80 - 16), $currentY)
+        $removeFileButton.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right
+        $form.Controls.Add($removeFileButton)
 
         $fileButton = New-Object System.Windows.Forms.Button
-        $fileButton.Text = "Select Files"
-        $fileButton.Location = New-Object System.Drawing.Point(10,35)
+        $fileButton.Text = [char]0xFF0B + " Add Files"
+        $fileButton.Size = New-Object System.Drawing.Size(90, 26)
+        $fileButton.Location = New-Object System.Drawing.Point((380 - $margin - 80 - 16 - 90 - $spacing), $currentY)
+        $fileButton.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right
+        $form.Controls.Add($fileButton)
+
+        $currentY += 26 + $spacing
+
+        # === File ListBox (filename only) ===
+        $fileListBox = New-Object System.Windows.Forms.ListBox
+        $fileListBox.Location = New-Object System.Drawing.Point($margin, $currentY)
+        $fileListBox.Size = New-Object System.Drawing.Size((380 - $margin * 2 - 16), 90)
+        $fileListBox.SelectionMode = [System.Windows.Forms.SelectionMode]::MultiExtended
+        $fileListBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+        $form.Controls.Add($fileListBox)
+
+        $currentY += 90 + $spacing
+
+        # === URL row (catbox only - hidden for others) ===
+        $urlPanel = New-Object System.Windows.Forms.Panel
+        $urlPanel.Location = New-Object System.Drawing.Point($margin, $currentY)
+        $urlPanel.Size = New-Object System.Drawing.Size((380 - $margin * 2 - 16), $rowHeight)
+        $urlPanel.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+
+        $urlLabel = New-Object System.Windows.Forms.Label
+        $urlLabel.Text = "URLs:"
+        $urlLabel.Location = New-Object System.Drawing.Point(0, 3)
+        $urlLabel.Size = New-Object System.Drawing.Size(55, $rowHeight)
+        $urlLabel.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
+        $urlPanel.Controls.Add($urlLabel)
+
+        $urlTextBox = New-Object System.Windows.Forms.TextBox
+        $urlTextBox.Location = New-Object System.Drawing.Point(61, 0)
+        $urlTextBox.Size = New-Object System.Drawing.Size(($urlPanel.Width - 61), 23)
+        $urlTextBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+        $urlPanel.Controls.Add($urlTextBox)
+
+        $form.Controls.Add($urlPanel)
+        $currentY += $rowHeight + $spacing
+
+        # === Title row (inline label) ===
+        $titleLabel = New-Object System.Windows.Forms.Label
+        $titleLabel.Text = "Title:"
+        $titleLabel.Location = New-Object System.Drawing.Point($margin, ($currentY + 3))
+        $titleLabel.Size = New-Object System.Drawing.Size(55, $rowHeight)
+        $titleLabel.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
+        $form.Controls.Add($titleLabel)
+
+        $titleTextBox = New-Object System.Windows.Forms.TextBox
+        $titleTextBox.Text = ""
+        $titleTextBox.Location = New-Object System.Drawing.Point(($margin + 61), $currentY)
+        $titleTextBox.Size = New-Object System.Drawing.Size((380 - $margin * 2 - 61 - 16), 23)
+        $titleTextBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+        $form.Controls.Add($titleTextBox)
+
+        $currentY += $rowHeight + $spacing
+
+        # === Description row (inline label) ===
+        $descLabel = New-Object System.Windows.Forms.Label
+        $descLabel.Text = "Description:"
+        $descLabel.Location = New-Object System.Drawing.Point($margin, ($currentY + 3))
+        $descLabel.Size = New-Object System.Drawing.Size(70, $rowHeight)
+        $descLabel.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
+        $form.Controls.Add($descLabel)
+
+        $descTextBox = New-Object System.Windows.Forms.TextBox
+        $descTextBox.Location = New-Object System.Drawing.Point(($margin + 76), $currentY)
+        $descTextBox.Size = New-Object System.Drawing.Size((380 - $margin * 2 - 76 - 16), 23)
+        $descTextBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+        $form.Controls.Add($descTextBox)
+
+        $currentY += $rowHeight + $spacing
+
+        # === Catbox options panel ===
+        $catboxOptsPanel = New-Object System.Windows.Forms.Panel
+        $catboxOptsPanel.Location = New-Object System.Drawing.Point($margin, $currentY)
+        $catboxOptsPanel.Size = New-Object System.Drawing.Size((380 - $margin * 2 - 16), $rowHeight)
+        $catboxOptsPanel.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+
+        $createAlbumCheckbox = New-Object System.Windows.Forms.CheckBox
+        $createAlbumCheckbox.Text = "Create Album"
+        $createAlbumCheckbox.Location = New-Object System.Drawing.Point(0, 0)
+        $createAlbumCheckbox.Size = New-Object System.Drawing.Size(120, $rowHeight)
+        $createAlbumCheckbox.Checked = $true
+        $catboxOptsPanel.Controls.Add($createAlbumCheckbox)
+        $form.Controls.Add($catboxOptsPanel)
+
+        # === Sxcu options panel ===
+        $sxcuOptsPanel = New-Object System.Windows.Forms.Panel
+        $sxcuOptsPanel.Location = New-Object System.Drawing.Point($margin, $currentY)
+        $sxcuOptsPanel.Size = New-Object System.Drawing.Size((380 - $margin * 2 - 16), $rowHeight)
+        $sxcuOptsPanel.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+        $sxcuOptsPanel.Visible = $false
+
+        $createCollectionCheckbox = New-Object System.Windows.Forms.CheckBox
+        $createCollectionCheckbox.Text = "Create Collection"
+        $createCollectionCheckbox.Location = New-Object System.Drawing.Point(0, 0)
+        $createCollectionCheckbox.Size = New-Object System.Drawing.Size(140, $rowHeight)
+        $createCollectionCheckbox.Checked = $true
+        $sxcuOptsPanel.Controls.Add($createCollectionCheckbox)
+        $form.Controls.Add($sxcuOptsPanel)
+
+        # === Imgchest options panel (Anonymous + Post ID inline) ===
+        $imgchestOptsPanel = New-Object System.Windows.Forms.Panel
+        $imgchestOptsPanel.Location = New-Object System.Drawing.Point($margin, $currentY)
+        $imgchestOptsPanel.Size = New-Object System.Drawing.Size((380 - $margin * 2 - 16), $rowHeight)
+        $imgchestOptsPanel.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+        $imgchestOptsPanel.Visible = $false
+
+        $anonymousCheckbox = New-Object System.Windows.Forms.CheckBox
+        $anonymousCheckbox.Text = "Anonymous"
+        $anonymousCheckbox.Location = New-Object System.Drawing.Point(0, 0)
+        $anonymousCheckbox.Size = New-Object System.Drawing.Size(100, $rowHeight)
+        $anonymousCheckbox.Checked = $false
+        $imgchestOptsPanel.Controls.Add($anonymousCheckbox)
+
+        $postIdLabel = New-Object System.Windows.Forms.Label
+        $postIdLabel.Text = "Post ID:"
+        $postIdLabel.Location = New-Object System.Drawing.Point(110, 3)
+        $postIdLabel.Size = New-Object System.Drawing.Size(55, $rowHeight)
+        $postIdLabel.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
+        $imgchestOptsPanel.Controls.Add($postIdLabel)
+
+        $postIdTextBox = New-Object System.Windows.Forms.TextBox
+        $postIdTextBox.Location = New-Object System.Drawing.Point(165, 0)
+        $postIdTextBox.Size = New-Object System.Drawing.Size(120, 23)
+        $imgchestOptsPanel.Controls.Add($postIdTextBox)
+
+        $form.Controls.Add($imgchestOptsPanel)
+
+        $currentY += $rowHeight + $spacing
+
+        # === Upload button (full width) ===
+        $uploadButton = New-Object System.Windows.Forms.Button
+        $uploadButton.Text = [char]0x2B06 + " Upload"
+        $uploadButton.Location = New-Object System.Drawing.Point($margin, $currentY)
+        $uploadButton.Size = New-Object System.Drawing.Size((380 - $margin * 2 - 16), 32)
+        $uploadButton.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+        $uploadButton.FlatStyle = [System.Windows.Forms.FlatStyle]::System
+        $form.Controls.Add($uploadButton)
+
+        $currentY += 32 + $spacing
+
+        # === Output TextBox (fills remaining space) ===
+        $outputTextBox = New-Object System.Windows.Forms.TextBox
+        $outputTextBox.Multiline = $true
+        $outputTextBox.ScrollBars = "Vertical"
+        $outputTextBox.ReadOnly = $true
+        $outputTextBox.Location = New-Object System.Drawing.Point($margin, $currentY)
+        $outputTextBox.Size = New-Object System.Drawing.Size((380 - $margin * 2 - 16), (520 - $currentY - $margin - 40))
+        $outputTextBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+        $form.Controls.Add($outputTextBox)
+
+        # === Provider change handler (show/hide panels dynamically) ===
+        $onProviderChanged = {
+            $provider = $providerComboBox.SelectedItem
+            $isCatbox = ($provider -eq "catbox")
+            $isSxcu = ($provider -eq "sxcu")
+            $isImgchest = ($provider -eq "imgchest")
+
+            $urlPanel.Visible = $isCatbox
+            if (-not $isCatbox) { $urlTextBox.Text = "" }
+
+            $catboxOptsPanel.Visible = $isCatbox
+            if ($isCatbox) { $createAlbumCheckbox.Checked = $true }
+
+            $sxcuOptsPanel.Visible = $isSxcu
+            if ($isSxcu) { $createCollectionCheckbox.Checked = $true }
+
+            $imgchestOptsPanel.Visible = $isImgchest
+            if (-not $isImgchest) {
+                $anonymousCheckbox.Checked = $false
+                $postIdTextBox.Text = ""
+            }
+        }
+        $providerComboBox.Add_SelectedIndexChanged($onProviderChanged)
+
+        # === Anonymous checkbox disables Post ID ===
+        $anonymousCheckbox.Add_CheckedChanged({
+            if ($anonymousCheckbox.Checked) {
+                $postIdTextBox.Enabled = $false
+                $postIdTextBox.Text = ""
+            } else {
+                $postIdTextBox.Enabled = $true
+            }
+        })
+
+        # === Remove selected files function ===
+        $removeSelectedFiles = {
+            if ($fileListBox.SelectedIndices.Count -gt 0) {
+                $indicesToRemove = @($fileListBox.SelectedIndices | Sort-Object -Descending)
+                foreach ($idx in $indicesToRemove) {
+                    $script:selectedFiles = @($script:selectedFiles[0..($idx-1)]) + @($script:selectedFiles[($idx+1)..($script:selectedFiles.Count-1)])
+                    $fileListBox.Items.RemoveAt($idx)
+                }
+                if ($script:selectedFiles.Count -eq 0) {
+                    $titleTextBox.Text = ""
+                }
+            }
+        }
+        $removeFileButton.Add_Click($removeSelectedFiles)
+
+        # === Add files handler ===
         $fileButton.Add_Click({
             if ($script:uploadCompleted) {
                 $script:selectedFiles = @()
@@ -1392,96 +1534,16 @@ if (-not $Files -and -not $Urls) {
             if ($openFileDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
                 $openFileDialog.FileNames | ForEach-Object {
                     $script:selectedFiles += $_
-                    $fileListBox.Items.Add($_)
+                    $fileListBox.Items.Add([System.IO.Path]::GetFileName($_))
                 }
-                if ($titleTextBox.Text -eq "") {
+                if ($titleTextBox.Text -eq "" -and $script:selectedFiles.Count -gt 0) {
                     $folderPath = [System.IO.Path]::GetDirectoryName($script:selectedFiles[0])
                     $titleTextBox.Text = [System.IO.Path]::GetFileName($folderPath)
                 }
             }
         })
-        $form.Controls.Add($fileButton)
 
-        # ListBox for selected files
-        $fileListBox = New-Object System.Windows.Forms.ListBox
-        $fileListBox.Location = New-Object System.Drawing.Point(10,65)
-        $fileListBox.Size = New-Object System.Drawing.Size(360,100)
-        $fileListBox.SelectionMode = [System.Windows.Forms.SelectionMode]::MultiExtended
-        $fileListBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
-        $form.Controls.Add($fileListBox)
-        
-        # Remove selected files function
-        $removeSelectedFiles = {
-            if ($fileListBox.SelectedIndices.Count -gt 0) {
-                $filesToRemove = @($fileListBox.SelectedItems)
-                foreach ($file in $filesToRemove) {
-                    $script:selectedFiles = $script:selectedFiles | Where-Object { $_ -ne $file }
-                }
-                for ($i = $fileListBox.SelectedIndices.Count - 1; $i -ge 0; $i--) {
-                    $fileListBox.Items.RemoveAt($fileListBox.SelectedIndices[$i])
-                }
-                
-                if ($script:selectedFiles.Count -eq 0) {
-                    $titleTextBox.Text = ""
-                }
-            }
-        }
-        
-        # Remove selected file button
-        $removeFileButton = New-Object System.Windows.Forms.Button
-        $removeFileButton.Text = "Remove Selected"
-        $removeFileButton.Location = New-Object System.Drawing.Point(10,170)
-        $removeFileButton.Size = New-Object System.Drawing.Size(120,25)
-        $removeFileButton.Add_Click($removeSelectedFiles)
-        $form.Controls.Add($removeFileButton)
-
-        # URL label and text box
-        $urlLabel = New-Object System.Windows.Forms.Label
-        $urlLabel.Text = "URLs (comma-separated):"
-        $urlLabel.Location = New-Object System.Drawing.Point(10,205)
-        $urlLabel.Size = New-Object System.Drawing.Size(360,20)
-        $urlLabel.Font = New-Object System.Drawing.Font("Microsoft Sans Serif", 8.25)
-        $form.Controls.Add($urlLabel)
-
-        $urlTextBox = New-Object System.Windows.Forms.TextBox
-        $urlTextBox.Location = New-Object System.Drawing.Point(10,225)
-        $urlTextBox.Size = New-Object System.Drawing.Size(360,20)
-        $urlTextBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
-        $form.Controls.Add($urlTextBox)
-
-        # Title
-        $titleLabel = New-Object System.Windows.Forms.Label
-        $titleLabel.Text = "Title:"
-        $titleLabel.Location = New-Object System.Drawing.Point(10,255)
-        $titleLabel.Size = New-Object System.Drawing.Size(360,20)
-        $titleLabel.Font = New-Object System.Drawing.Font("Microsoft Sans Serif", 8.25)
-        $form.Controls.Add($titleLabel)
-
-        $titleTextBox = New-Object System.Windows.Forms.TextBox
-        $titleTextBox.Text = ""
-        $titleTextBox.Location = New-Object System.Drawing.Point(10,275)
-        $titleTextBox.Size = New-Object System.Drawing.Size(360,20)
-        $titleTextBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
-        $form.Controls.Add($titleTextBox)
-
-        # Description
-        $descLabel = New-Object System.Windows.Forms.Label
-        $descLabel.Text = "Description:"
-        $descLabel.Location = New-Object System.Drawing.Point(10,305)
-        $descLabel.Size = New-Object System.Drawing.Size(360,20)
-        $descLabel.Font = New-Object System.Drawing.Font("Microsoft Sans Serif", 8.25)
-        $form.Controls.Add($descLabel)
-
-        $descTextBox = New-Object System.Windows.Forms.TextBox
-        $descTextBox.Location = New-Object System.Drawing.Point(10,325)
-        $descTextBox.Size = New-Object System.Drawing.Size(360,20)
-        $descTextBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
-        $form.Controls.Add($descTextBox)
-
-        # Upload button
-        $uploadButton = New-Object System.Windows.Forms.Button
-        $uploadButton.Text = "Upload"
-        $uploadButton.Location = New-Object System.Drawing.Point(10,455)
+        # === Upload button handler ===
         $uploadButton.Add_Click({
             $uploadButton.Enabled = $false
             $uploadButton.Text = "Uploading..."
@@ -1502,11 +1564,15 @@ if (-not $Files -and -not $Urls) {
                         GuiMode = $true
                     }
 
-                    if ($createCollectionCheckbox.Checked) {
+                    if ($provider -eq 'catbox' -and $createAlbumCheckbox.Checked) {
                         $params.CreateCollection = $true
                     }
 
-                    if ($anonymousCheckbox.Checked) {
+                    if ($provider -eq 'sxcu' -and $createCollectionCheckbox.Checked) {
+                        $params.CreateCollection = $true
+                    }
+
+                    if ($provider -eq 'imgchest' -and $anonymousCheckbox.Checked) {
                         $params.Anonymous = $true
                     }
 
@@ -1514,7 +1580,7 @@ if (-not $Files -and -not $Urls) {
                         $params.PostId = $postIdTextBox.Text
                     }
 
-                    $output = Invoke-CatboxUpload @params
+                    $output = Invoke-ImageUpload @params
                 }
                 
                 $totalInputs = $script:selectedFiles.Count + $(if ($urls) { $urls.Count } else { 0 })
@@ -1529,9 +1595,9 @@ if (-not $Files -and -not $Urls) {
                 $failedUploads = $totalInputs - $successfulUploads
                 
                 $summary = if ($failedUploads -gt 0) {
-                    "Successfully uploaded $successfulUploads out of $totalInputs inputs ($failedUploads failed)."
+                    "Done: $successfulUploads uploaded ($failedUploads failed)"
                 } else {
-                    "Successfully uploaded $successfulUploads out of $totalInputs inputs."
+                    "Done: $successfulUploads uploaded"
                 }
                 
                 $output = @($summary) + $output
@@ -1544,26 +1610,13 @@ if (-not $Files -and -not $Urls) {
                 $outputTextBox.Text = "Upload error: $_"
             } finally {
                 $uploadButton.Enabled = $true
-                $uploadButton.Text = "Upload"
+                $uploadButton.Text = [char]0x2B06 + " Upload"
             }
         })
-        $form.Controls.Add($uploadButton)
 
-        # Output text box
-        $outputTextBox = New-Object System.Windows.Forms.TextBox
-        $outputTextBox.Multiline = $true
-        $outputTextBox.ScrollBars = "Vertical"
-        $outputTextBox.Location = New-Object System.Drawing.Point(10,485)
-        $outputTextBox.Size = New-Object System.Drawing.Size(360,100)
-        $outputTextBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
-        $form.Controls.Add($outputTextBox)
-
-        # Initial toggle
+        # Initial state: imgchest is default
         $form.Add_Load({
-            & $toggleUrlFields
-            & $toggleCollectionCheckbox
-            & $toggleAnonymousCheckbox
-            & $togglePostIdField
+            & $onProviderChanged
         })
         
         # Delete key handler
@@ -1580,6 +1633,6 @@ if (-not $Files -and -not $Urls) {
         Write-Host "GUI Error: $_"
     }
 } else {
-    $output = Invoke-CatboxUpload -Files $Files -Urls $Urls -Title $Title -Description $Description -Provider $Provider -CreateCollection:$CreateCollection -VerboseOutput:$VerboseOutput -Anonymous:$Anonymous -PostId $PostId
+    $output = Invoke-ImageUpload -Files $Files -Urls $Urls -Title $Title -Description $Description -Provider $Provider -CreateCollection:$CreateCollection -VerboseOutput:$VerboseOutput -Anonymous:$Anonymous -PostId $PostId
     $output | ForEach-Object { Write-Output $_ }
 }
