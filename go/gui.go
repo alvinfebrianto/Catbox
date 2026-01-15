@@ -14,25 +14,25 @@ var timeNow = time.Now
 var timeSleep = time.Sleep
 
 type App struct {
-	mainWindow       *walk.MainWindow
-	fileListBox      *walk.ListBox
-	fileListModel    *FileListModel
-	urlEdit          *walk.LineEdit
-	titleEdit        *walk.LineEdit
-	descEdit         *walk.LineEdit
-	providerCombo    *walk.ComboBox
-	albumCheck       *walk.CheckBox
-	collectionCheck  *walk.CheckBox
-	anonymousCheck   *walk.CheckBox
-	postIDEdit       *walk.LineEdit
-	outputEdit       *walk.TextEdit
-	uploadButton     *walk.PushButton
-	selectedFiles    []string
-	uploadCompleted  bool
+	mainWindow      *walk.MainWindow
+	fileListBox     *walk.ListBox
+	fileListModel   *FileListModel
+	urlEdit         *walk.LineEdit
+	titleEdit       *walk.LineEdit
+	descEdit        *walk.LineEdit
+	providerCombo   *walk.ComboBox
+	albumCheck      *walk.CheckBox
+	collectionCheck *walk.CheckBox
+	anonymousCheck  *walk.CheckBox
+	postIDEdit      *walk.LineEdit
+	outputEdit      *walk.TextEdit
+	uploadButton    *walk.PushButton
+	selectedFiles   []string
+	uploadCompleted bool
 
-	urlComposite        *walk.Composite
-	catboxOptsComposite *walk.Composite
-	sxcuOptsComposite   *walk.Composite
+	urlComposite          *walk.Composite
+	catboxOptsComposite   *walk.Composite
+	sxcuOptsComposite     *walk.Composite
 	imgchestOptsComposite *walk.Composite
 }
 
@@ -79,7 +79,7 @@ func (a *App) Run() error {
 							ComboBox{
 								AssignTo:              &a.providerCombo,
 								Model:                 providers,
-								CurrentIndex:          0,
+								CurrentIndex:          2,
 								OnCurrentIndexChanged: a.onProviderChanged,
 								MinSize:               Size{Width: 90},
 							},
