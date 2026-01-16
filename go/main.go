@@ -20,16 +20,27 @@ import (
 )
 
 var (
-	user32         = syscall.NewLazyDLL("user32.dll")
-	messageBoxW    = user32.NewProc("MessageBoxW")
-	comdlg32       = syscall.NewLazyDLL("comdlg32.dll")
+	user32           = syscall.NewLazyDLL("user32.dll")
+	messageBoxW      = user32.NewProc("MessageBoxW")
+	comdlg32         = syscall.NewLazyDLL("comdlg32.dll")
 	getOpenFileNameW = comdlg32.NewProc("GetOpenFileNameW")
+	dwmapi           = syscall.NewLazyDLL("dwmapi.dll")
+	dwmSetWindowAttr = dwmapi.NewProc("DwmSetWindowAttribute")
+	advapi32         = syscall.NewLazyDLL("advapi32.dll")
+	regOpenKeyExW    = advapi32.NewProc("RegOpenKeyExW")
+	regQueryValueExW = advapi32.NewProc("RegQueryValueExW")
+	regCloseKey      = advapi32.NewProc("RegCloseKey")
 )
 
 const (
 	MB_OK              = 0x00000000
 	MB_ICONERROR       = 0x00000010
 	MB_ICONINFORMATION = 0x00000040
+
+	DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+
+	HKEY_CURRENT_USER = 0x80000001
+	KEY_READ          = 0x20019
 )
 
 var (
@@ -45,6 +56,38 @@ func showError(message string) {
 func showInfo(message string) {
 	msg, _ := syscall.UTF16PtrFromString(message)
 	messageBoxW.Call(0, uintptr(unsafe.Pointer(msg)), uintptr(unsafe.Pointer(titleInfo)), MB_OK|MB_ICONINFORMATION)
+}
+
+func IsSystemDarkMode() bool {
+	subKey, _ := syscall.UTF16PtrFromString(`Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`)
+	valueName, _ := syscall.UTF16PtrFromString("AppsUseLightTheme")
+
+	var hKey uintptr
+	ret, _, _ := regOpenKeyExW.Call(HKEY_CURRENT_USER, uintptr(unsafe.Pointer(subKey)), 0, KEY_READ, uintptr(unsafe.Pointer(&hKey)))
+	if ret != 0 {
+		return false
+	}
+	defer regCloseKey.Call(hKey)
+
+	var dataType uint32
+	var data uint32
+	dataSize := uint32(4)
+	ret, _, _ = regQueryValueExW.Call(hKey, uintptr(unsafe.Pointer(valueName)), 0, uintptr(unsafe.Pointer(&dataType)), uintptr(unsafe.Pointer(&data)), uintptr(unsafe.Pointer(&dataSize)))
+	if ret != 0 {
+		return false
+	}
+	return data == 0
+}
+
+func SetDarkModeTitleBar(hwnd uintptr, dark bool) {
+	if dwmSetWindowAttr.Find() != nil {
+		return
+	}
+	var value int32
+	if dark {
+		value = 1
+	}
+	dwmSetWindowAttr.Call(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, uintptr(unsafe.Pointer(&value)), 4)
 }
 
 type RateLimitEntry struct {

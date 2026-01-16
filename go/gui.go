@@ -92,14 +92,25 @@ func (a *App) Run() error {
 					},
 					HSpacer{},
 					PushButton{
-						Text:      "＋ Add Files",
-						OnClicked: a.onSelectFiles,
-						MinSize:   Size{Width: 90},
+						Text:        "＋",
+						ToolTipText: "Add Files",
+						OnClicked:   a.onSelectFiles,
+						MinSize:     Size{Width: 32},
+						MaxSize:     Size{Width: 32},
 					},
 					PushButton{
-						Text:      "✕ Remove",
-						OnClicked: a.onRemoveSelected,
-						MinSize:   Size{Width: 80},
+						Text:        "－",
+						ToolTipText: "Remove Selected",
+						OnClicked:   a.onRemoveSelected,
+						MinSize:     Size{Width: 32},
+						MaxSize:     Size{Width: 32},
+					},
+					PushButton{
+						Text:        "✕",
+						ToolTipText: "Clear All",
+						OnClicked:   a.onClearAll,
+						MinSize:     Size{Width: 32},
+						MaxSize:     Size{Width: 32},
 					},
 				},
 			},
@@ -110,7 +121,6 @@ func (a *App) Run() error {
 				MinSize:        Size{Height: 90},
 				MultiSelection: true,
 				OnKeyDown:      a.onFileListKeyDown,
-				ToolTipText:    "Selected files (shows filename only, full path on hover)",
 			},
 
 			Composite{
@@ -203,6 +213,11 @@ func (a *App) Run() error {
 
 	if err != nil {
 		return err
+	}
+
+	if IsSystemDarkMode() {
+		SetDarkModeTitleBar(uintptr(a.mainWindow.Handle()), true)
+		ApplyDarkTheme(a)
 	}
 
 	a.onProviderChanged()
@@ -318,6 +333,15 @@ func (a *App) onRemoveSelected() {
 
 	a.selectedFiles = newFiles
 	a.fileListModel.items = newItems
+	a.fileListModel.PublishItemsReset()
+}
+
+func (a *App) onClearAll() {
+	if len(a.selectedFiles) == 0 {
+		return
+	}
+	a.selectedFiles = a.selectedFiles[:0]
+	a.fileListModel.items = a.fileListModel.items[:0]
 	a.fileListModel.PublishItemsReset()
 }
 
