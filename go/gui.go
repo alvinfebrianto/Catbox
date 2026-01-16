@@ -36,9 +36,14 @@ type App struct {
 	imgchestOptsComposite *walk.Composite
 }
 
+type FileItem struct {
+	Path string
+	Base string
+}
+
 type FileListModel struct {
 	walk.ListModelBase
-	items []string
+	items []FileItem
 }
 
 func (m *FileListModel) ItemCount() int {
@@ -47,14 +52,14 @@ func (m *FileListModel) ItemCount() int {
 
 func (m *FileListModel) Value(index int) interface{} {
 	if index >= 0 && index < len(m.items) {
-		return filepath.Base(m.items[index])
+		return m.items[index].Base
 	}
 	return ""
 }
 
 func NewApp() *App {
 	return &App{
-		fileListModel: &FileListModel{items: []string{}},
+		fileListModel: &FileListModel{items: make([]FileItem, 0, 32)},
 	}
 }
 
@@ -200,6 +205,8 @@ func (a *App) Run() error {
 		return err
 	}
 
+	a.onProviderChanged()
+
 	a.mainWindow.Run()
 	return nil
 }
@@ -252,8 +259,8 @@ func (a *App) onAnonymousChanged() {
 
 func (a *App) onSelectFiles() {
 	if a.uploadCompleted {
-		a.selectedFiles = []string{}
-		a.fileListModel.items = []string{}
+		a.selectedFiles = a.selectedFiles[:0]
+		a.fileListModel.items = a.fileListModel.items[:0]
 		a.fileListModel.PublishItemsReset()
 		a.titleEdit.SetText("")
 		a.postIDEdit.SetText("")
@@ -273,7 +280,7 @@ func (a *App) onSelectFiles() {
 
 	for _, path := range dlg.FilePaths {
 		a.selectedFiles = append(a.selectedFiles, path)
-		a.fileListModel.items = append(a.fileListModel.items, path)
+		a.fileListModel.items = append(a.fileListModel.items, FileItem{Path: path, Base: filepath.Base(path)})
 	}
 	a.fileListModel.PublishItemsReset()
 
@@ -295,15 +302,15 @@ func (a *App) onRemoveSelected() {
 		return
 	}
 
-	removeSet := make(map[int]bool)
+	removeSet := make(map[int]struct{}, len(indices))
 	for _, idx := range indices {
-		removeSet[idx] = true
+		removeSet[idx] = struct{}{}
 	}
 
-	var newFiles []string
-	var newItems []string
+	newFiles := make([]string, 0, len(a.selectedFiles))
+	newItems := make([]FileItem, 0, len(a.fileListModel.items))
 	for i, f := range a.selectedFiles {
-		if !removeSet[i] {
+		if _, remove := removeSet[i]; !remove {
 			newFiles = append(newFiles, f)
 			newItems = append(newItems, a.fileListModel.items[i])
 		}
@@ -390,6 +397,7 @@ func (a *App) startUpload() {
 
 		a.mainWindow.Synchronize(func() {
 			var output strings.Builder
+			output.Grow(2048)
 
 			if len(errors) > 0 {
 				output.WriteString(fmt.Sprintf("Done: %d success, %d failed\r\n\r\n", successCount, len(errors)))
@@ -398,17 +406,21 @@ func (a *App) startUpload() {
 			}
 
 			if groupResult != "" {
-				output.WriteString(groupResult + "\r\n")
+				output.WriteString(groupResult)
+				output.WriteString("\r\n")
 			}
 
 			for _, r := range results {
-				output.WriteString(r + "\r\n")
+				output.WriteString(r)
+				output.WriteString("\r\n")
 			}
 
 			if len(errors) > 0 {
 				output.WriteString("\r\nErrors:\r\n")
 				for _, e := range errors {
-					output.WriteString("• " + e + "\r\n")
+					output.WriteString("• ")
+					output.WriteString(e)
+					output.WriteString("\r\n")
 				}
 			}
 
@@ -423,10 +435,11 @@ func (a *App) startUpload() {
 }
 
 func (a *App) uploadCatbox(urls, title, desc string, createAlbum bool) ([]string, string, []string) {
-	var results []string
+	totalFiles := len(a.selectedFiles)
+	results := make([]string, 0, totalFiles)
+	errors := make([]string, 0, 4)
+	uploadedFilenames := make([]string, 0, totalFiles)
 	var albumResult string
-	var errors []string
-	var uploadedFilenames []string
 
 	for _, filePath := range a.selectedFiles {
 		url, err := uploadFileToCatbox(filePath)
@@ -459,7 +472,7 @@ func (a *App) uploadCatbox(urls, title, desc string, createAlbum bool) ([]string
 		if err != nil {
 			errors = append(errors, fmt.Sprintf("Album creation: %v", err))
 		} else {
-			albumResult = fmt.Sprintf("Album: %s", albumURL)
+			albumResult = "Album: " + albumURL
 		}
 	}
 
@@ -467,16 +480,16 @@ func (a *App) uploadCatbox(urls, title, desc string, createAlbum bool) ([]string
 }
 
 func (a *App) uploadSxcu(title, desc string, createCollection bool, updateOutput func(string)) ([]string, string, []string) {
-	var results []string
+	totalFiles := len(a.selectedFiles)
+	results := make([]string, 0, totalFiles)
+	errors := make([]string, 0, 4)
 	var collectionResult string
-	var errors []string
 	var collectionID string
 	var rateLimitStatus string
 
-	totalFiles := len(a.selectedFiles)
-
 	buildOutput := func() string {
 		var output strings.Builder
+		output.Grow(2048)
 		successCount := len(results)
 		failCount := len(errors)
 		if failCount > 0 {
@@ -485,16 +498,21 @@ func (a *App) uploadSxcu(title, desc string, createCollection bool, updateOutput
 			output.WriteString(fmt.Sprintf("Uploading... %d/%d\r\n\r\n", successCount, totalFiles))
 		}
 		if rateLimitStatus != "" {
-			output.WriteString(rateLimitStatus + "\r\n")
+			output.WriteString(rateLimitStatus)
+			output.WriteString("\r\n")
 		}
 		if collectionResult != "" {
-			output.WriteString(collectionResult + "\r\n")
+			output.WriteString(collectionResult)
+			output.WriteString("\r\n")
 		}
 		for _, r := range results {
-			output.WriteString(r + "\r\n")
+			output.WriteString(r)
+			output.WriteString("\r\n")
 		}
 		for _, e := range errors {
-			output.WriteString("Error: " + e + "\r\n")
+			output.WriteString("Error: ")
+			output.WriteString(e)
+			output.WriteString("\r\n")
 		}
 		return output.String()
 	}
@@ -541,7 +559,7 @@ func (a *App) uploadSxcu(title, desc string, createCollection bool, updateOutput
 			errors = append(errors, fmt.Sprintf("Collection creation: %v", err))
 		} else {
 			collectionID = coll.CollectionID
-			collectionResult = fmt.Sprintf("Collection: %s", coll.GetURL())
+			collectionResult = "Collection: " + coll.GetURL()
 		}
 		updateOutput(buildOutput())
 	}
@@ -569,21 +587,21 @@ func (a *App) uploadSxcu(title, desc string, createCollection bool, updateOutput
 }
 
 func (a *App) uploadImgchest(title string, anonymous bool, postID string, updateOutput func(string)) ([]string, string, []string, int) {
-	var results []string
-	var postResult string
-	var errors []string
-
 	if len(a.selectedFiles) == 0 {
-		return results, postResult, errors, 0
+		return nil, "", nil, 0
 	}
 
 	totalFiles := len(a.selectedFiles)
+	results := make([]string, 0, totalFiles)
+	errors := make([]string, 0, 4)
+	var postResult string
 
 	uploadedCount := 0
 	useUploadedCount := false
 
 	buildOutput := func() string {
 		var output strings.Builder
+		output.Grow(2048)
 		var successCount int
 		if useUploadedCount {
 			successCount = uploadedCount
@@ -597,13 +615,17 @@ func (a *App) uploadImgchest(title string, anonymous bool, postID string, update
 			output.WriteString(fmt.Sprintf("Uploading... %d/%d\r\n\r\n", successCount, totalFiles))
 		}
 		if postResult != "" {
-			output.WriteString(postResult + "\r\n")
+			output.WriteString(postResult)
+			output.WriteString("\r\n")
 		}
 		for _, r := range results {
-			output.WriteString(r + "\r\n")
+			output.WriteString(r)
+			output.WriteString("\r\n")
 		}
 		for _, e := range errors {
-			output.WriteString("Error: " + e + "\r\n")
+			output.WriteString("Error: ")
+			output.WriteString(e)
+			output.WriteString("\r\n")
 		}
 		return output.String()
 	}
@@ -611,7 +633,7 @@ func (a *App) uploadImgchest(title string, anonymous bool, postID string, update
 	if postID != "" {
 		const batchSize = 20
 		totalBatches := (len(a.selectedFiles) + batchSize - 1) / batchSize
-		seenLinks := make(map[string]bool)
+		seenLinks := make(map[string]struct{}, totalFiles)
 		useUploadedCount = true
 
 		for batchNum := 1; batchNum <= totalBatches; batchNum++ {
@@ -627,12 +649,12 @@ func (a *App) uploadImgchest(title string, anonymous bool, postID string, update
 				errors = append(errors, fmt.Sprintf("Batch %d: %s", batchNum, err.Error()))
 			} else {
 				if postResult == "" {
-					postResult = fmt.Sprintf("Post: %s", resp.GetPostURL())
+					postResult = "Post: " + resp.GetPostURL()
 				}
 				uploadedCount += len(batch)
 				for _, img := range resp.Data.Images {
-					if !seenLinks[img.Link] {
-						seenLinks[img.Link] = true
+					if _, seen := seenLinks[img.Link]; !seen {
+						seenLinks[img.Link] = struct{}{}
 						results = append(results, img.Link)
 					}
 				}
@@ -642,17 +664,17 @@ func (a *App) uploadImgchest(title string, anonymous bool, postID string, update
 		return results, postResult, errors, uploadedCount
 	}
 
-	seenLinks := make(map[string]bool)
+	seenLinks := make(map[string]struct{}, totalFiles)
 	callback := func(batchNum int, totalBatches int, postURL string, imageLinks []string, err error) {
 		if err != nil {
 			errors = append(errors, fmt.Sprintf("Batch %d: %s", batchNum, err.Error()))
 		} else {
 			if postResult == "" && postURL != "" {
-				postResult = fmt.Sprintf("Post: %s", postURL)
+				postResult = "Post: " + postURL
 			}
 			for _, link := range imageLinks {
-				if !seenLinks[link] {
-					seenLinks[link] = true
+				if _, seen := seenLinks[link]; !seen {
+					seenLinks[link] = struct{}{}
 					results = append(results, link)
 				}
 			}

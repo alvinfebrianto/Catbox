@@ -32,16 +32,19 @@ const (
 	MB_ICONINFORMATION = 0x00000040
 )
 
+var (
+	titleInfo, _  = syscall.UTF16PtrFromString("Image Uploader")
+	titleError, _ = syscall.UTF16PtrFromString("Image Uploader - Error")
+)
+
 func showError(message string) {
-	title, _ := syscall.UTF16PtrFromString("Image Uploader - Error")
 	msg, _ := syscall.UTF16PtrFromString(message)
-	messageBoxW.Call(0, uintptr(unsafe.Pointer(msg)), uintptr(unsafe.Pointer(title)), MB_OK|MB_ICONERROR)
+	messageBoxW.Call(0, uintptr(unsafe.Pointer(msg)), uintptr(unsafe.Pointer(titleError)), MB_OK|MB_ICONERROR)
 }
 
 func showInfo(message string) {
-	title, _ := syscall.UTF16PtrFromString("Image Uploader")
 	msg, _ := syscall.UTF16PtrFromString(message)
-	messageBoxW.Call(0, uintptr(unsafe.Pointer(msg)), uintptr(unsafe.Pointer(title)), MB_OK|MB_ICONINFORMATION)
+	messageBoxW.Call(0, uintptr(unsafe.Pointer(msg)), uintptr(unsafe.Pointer(titleInfo)), MB_OK|MB_ICONINFORMATION)
 }
 
 type RateLimitEntry struct {
@@ -504,49 +507,86 @@ func calculateExponentialBackoff(attempt int, baseDelayMs, maxDelayMs int64) tim
 	return time.Duration(delay)*time.Millisecond + jitter
 }
 
-var sxcuAllowedExtensions = map[string]bool{
-	".png": true, ".gif": true, ".jpeg": true, ".jpg": true,
-	".ico": true, ".bmp": true, ".tiff": true, ".tif": true,
-	".webm": true, ".webp": true,
+var sxcuAllowedExtensions = map[string]struct{}{
+	".png": {}, ".gif": {}, ".jpeg": {}, ".jpg": {},
+	".ico": {}, ".bmp": {}, ".tiff": {}, ".tif": {},
+	".webm": {}, ".webp": {},
 }
 
 func isSxcuAllowedFileType(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
-	return sxcuAllowedExtensions[ext]
+	_, ok := sxcuAllowedExtensions[ext]
+	return ok
+}
+
+var copyBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 32*1024)
+		return &b
+	},
+}
+
+var httpTransport = &http.Transport{
+	Proxy:               http.ProxyFromEnvironment,
+	MaxIdleConns:        10,
+	MaxIdleConnsPerHost: 10,
+	IdleConnTimeout:     90 * time.Second,
+	ForceAttemptHTTP2:   true,
 }
 
 var httpClient = &http.Client{
-	Timeout: 5 * time.Minute,
+	Transport: httpTransport,
+	Timeout:   5 * time.Minute,
 }
 
 func uploadFileToCatbox(filePath string) (string, error) {
-	file, err := os.Open(filePath)
+	pr, pw := io.Pipe()
+	writer := multipart.NewWriter(pw)
+	contentType := writer.FormDataContentType()
+
+	errCh := make(chan error, 1)
+	go func() {
+		defer pw.Close()
+		defer writer.Close()
+
+		if err := writer.WriteField("reqtype", "fileupload"); err != nil {
+			pw.CloseWithError(err)
+			errCh <- err
+			return
+		}
+
+		file, err := os.Open(filePath)
+		if err != nil {
+			pw.CloseWithError(err)
+			errCh <- err
+			return
+		}
+		defer file.Close()
+
+		part, err := writer.CreateFormFile("fileToUpload", filepath.Base(filePath))
+		if err != nil {
+			pw.CloseWithError(err)
+			errCh <- err
+			return
+		}
+
+		bufp := copyBufPool.Get().(*[]byte)
+		_, err = io.CopyBuffer(part, file, *bufp)
+		copyBufPool.Put(bufp)
+		if err != nil {
+			pw.CloseWithError(err)
+			errCh <- err
+			return
+		}
+		errCh <- nil
+	}()
+
+	req, err := http.NewRequest("POST", "https://catbox.moe/user/api.php", pr)
 	if err != nil {
-		return "", fmt.Errorf("failed to open file: %w", err)
-	}
-	defer file.Close()
-
-	var buf bytes.Buffer
-	writer := multipart.NewWriter(&buf)
-
-	writer.WriteField("reqtype", "fileupload")
-
-	part, err := writer.CreateFormFile("fileToUpload", filepath.Base(filePath))
-	if err != nil {
-		return "", fmt.Errorf("failed to create form file: %w", err)
-	}
-
-	if _, err := io.Copy(part, file); err != nil {
-		return "", fmt.Errorf("failed to copy file data: %w", err)
-	}
-
-	writer.Close()
-
-	req, err := http.NewRequest("POST", "https://catbox.moe/user/api.php", &buf)
-	if err != nil {
+		pr.Close()
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Content-Type", contentType)
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -554,7 +594,11 @@ func uploadFileToCatbox(filePath string) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	if pipeErr := <-errCh; pipeErr != nil {
+		return "", fmt.Errorf("failed to write multipart: %w", pipeErr)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if err != nil {
 		return "", fmt.Errorf("failed to read response: %w", err)
 	}
@@ -567,19 +611,24 @@ func uploadFileToCatbox(filePath string) (string, error) {
 	return result, nil
 }
 
-func uploadURLToCatbox(url string) (string, error) {
-	var buf bytes.Buffer
-	writer := multipart.NewWriter(&buf)
+func uploadURLToCatbox(targetURL string) (string, error) {
+	pr, pw := io.Pipe()
+	writer := multipart.NewWriter(pw)
+	contentType := writer.FormDataContentType()
 
-	writer.WriteField("reqtype", "urlupload")
-	writer.WriteField("url", url)
-	writer.Close()
+	go func() {
+		defer pw.Close()
+		defer writer.Close()
+		writer.WriteField("reqtype", "urlupload")
+		writer.WriteField("url", targetURL)
+	}()
 
-	req, err := http.NewRequest("POST", "https://catbox.moe/user/api.php", &buf)
+	req, err := http.NewRequest("POST", "https://catbox.moe/user/api.php", pr)
 	if err != nil {
+		pr.Close()
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Content-Type", contentType)
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -587,7 +636,7 @@ func uploadURLToCatbox(url string) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if err != nil {
 		return "", fmt.Errorf("failed to read response: %w", err)
 	}
@@ -601,20 +650,26 @@ func uploadURLToCatbox(url string) (string, error) {
 }
 
 func createCatboxAlbum(fileNames []string, title, desc string) (string, error) {
-	var buf bytes.Buffer
-	writer := multipart.NewWriter(&buf)
+	pr, pw := io.Pipe()
+	writer := multipart.NewWriter(pw)
+	contentType := writer.FormDataContentType()
+	filesStr := strings.Join(fileNames, " ")
 
-	writer.WriteField("reqtype", "createalbum")
-	writer.WriteField("title", title)
-	writer.WriteField("desc", desc)
-	writer.WriteField("files", strings.Join(fileNames, " "))
-	writer.Close()
+	go func() {
+		defer pw.Close()
+		defer writer.Close()
+		writer.WriteField("reqtype", "createalbum")
+		writer.WriteField("title", title)
+		writer.WriteField("desc", desc)
+		writer.WriteField("files", filesStr)
+	}()
 
-	req, err := http.NewRequest("POST", "https://catbox.moe/user/api.php", &buf)
+	req, err := http.NewRequest("POST", "https://catbox.moe/user/api.php", pr)
 	if err != nil {
+		pr.Close()
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Content-Type", contentType)
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -622,7 +677,7 @@ func createCatboxAlbum(fileNames []string, title, desc string) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if err != nil {
 		return "", fmt.Errorf("failed to read response: %w", err)
 	}
@@ -662,6 +717,7 @@ func uploadFileToSxcu(filePath, collectionID string, maxRetries int) (*SxcuRespo
 	}
 
 	var lastErr error
+	fileName := filepath.Base(filePath)
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		check := checkSxcuRateLimit(sxcuFileUploadBucket)
@@ -673,37 +729,52 @@ func uploadFileToSxcu(filePath, collectionID string, maxRetries int) (*SxcuRespo
 			continue
 		}
 
-		file, err := os.Open(filePath)
+		pr, pw := io.Pipe()
+		writer := multipart.NewWriter(pw)
+		contentType := writer.FormDataContentType()
+
+		errCh := make(chan error, 1)
+		go func() {
+			defer pw.Close()
+			defer writer.Close()
+
+			part, err := writer.CreateFormFile("file", fileName)
+			if err != nil {
+				pw.CloseWithError(err)
+				errCh <- err
+				return
+			}
+
+			file, err := os.Open(filePath)
+			if err != nil {
+				pw.CloseWithError(err)
+				errCh <- err
+				return
+			}
+			defer file.Close()
+
+			bufp := copyBufPool.Get().(*[]byte)
+			_, err = io.CopyBuffer(part, file, *bufp)
+			copyBufPool.Put(bufp)
+			if err != nil {
+				pw.CloseWithError(err)
+				errCh <- err
+				return
+			}
+
+			writer.WriteField("noembed", "")
+			if collectionID != "" {
+				writer.WriteField("collection", collectionID)
+			}
+			errCh <- nil
+		}()
+
+		req, err := http.NewRequest("POST", "https://sxcu.net/api/files/create", pr)
 		if err != nil {
-			return nil, fmt.Errorf("failed to open file: %w", err)
-		}
-
-		var buf bytes.Buffer
-		writer := multipart.NewWriter(&buf)
-
-		part, err := writer.CreateFormFile("file", filepath.Base(filePath))
-		if err != nil {
-			file.Close()
-			return nil, fmt.Errorf("failed to create form file: %w", err)
-		}
-
-		if _, err := io.Copy(part, file); err != nil {
-			file.Close()
-			return nil, fmt.Errorf("failed to copy file data: %w", err)
-		}
-
-		writer.WriteField("noembed", "")
-		if collectionID != "" {
-			writer.WriteField("collection", collectionID)
-		}
-		writer.Close()
-		file.Close()
-
-		req, err := http.NewRequest("POST", "https://sxcu.net/api/files/create", &buf)
-		if err != nil {
+			pr.Close()
 			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
-		req.Header.Set("Content-Type", writer.FormDataContentType())
+		req.Header.Set("Content-Type", contentType)
 		req.Header.Set("User-Agent", "ImageUploader/1.0 (+https://github.com)")
 
 		resp, err := httpClient.Do(req)
@@ -716,17 +787,17 @@ func uploadFileToSxcu(filePath, collectionID string, maxRetries int) (*SxcuRespo
 
 		headers := parseRateLimitHeaders(resp)
 
-		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			lastErr = fmt.Errorf("failed to read response: %w", err)
-			continue
+		if pipeErr := <-errCh; pipeErr != nil {
+			resp.Body.Close()
+			return nil, fmt.Errorf("failed to write multipart: %w", pipeErr)
 		}
 
 		var result SxcuResponse
-		if err := json.Unmarshal(body, &result); err != nil {
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 8192)).Decode(&result); err != nil {
+			resp.Body.Close()
 			return nil, fmt.Errorf("failed to parse response: %w", err)
 		}
+		resp.Body.Close()
 
 		isGlobalError := resp.StatusCode == 429 && (headers.IsGlobal || result.Code == 2)
 		isRateLimitError := resp.StatusCode == 429 || result.Code == 815 || result.Code == 185
@@ -767,6 +838,7 @@ func uploadFileToSxcuWithRateLimitInfo(filePath, collectionID string, maxRetries
 	}
 
 	var lastErr error
+	fileName := filepath.Base(filePath)
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		check := checkSxcuRateLimit(sxcuFileUploadBucket)
@@ -786,37 +858,52 @@ func uploadFileToSxcuWithRateLimitInfo(filePath, collectionID string, maxRetries
 			continue
 		}
 
-		file, err := os.Open(filePath)
+		pr, pw := io.Pipe()
+		writer := multipart.NewWriter(pw)
+		contentType := writer.FormDataContentType()
+
+		errCh := make(chan error, 1)
+		go func() {
+			defer pw.Close()
+			defer writer.Close()
+
+			part, err := writer.CreateFormFile("file", fileName)
+			if err != nil {
+				pw.CloseWithError(err)
+				errCh <- err
+				return
+			}
+
+			file, err := os.Open(filePath)
+			if err != nil {
+				pw.CloseWithError(err)
+				errCh <- err
+				return
+			}
+			defer file.Close()
+
+			bufp := copyBufPool.Get().(*[]byte)
+			_, err = io.CopyBuffer(part, file, *bufp)
+			copyBufPool.Put(bufp)
+			if err != nil {
+				pw.CloseWithError(err)
+				errCh <- err
+				return
+			}
+
+			writer.WriteField("noembed", "")
+			if collectionID != "" {
+				writer.WriteField("collection", collectionID)
+			}
+			errCh <- nil
+		}()
+
+		req, err := http.NewRequest("POST", "https://sxcu.net/api/files/create", pr)
 		if err != nil {
-			return nil, fmt.Errorf("failed to open file: %w", err)
-		}
-
-		var buf bytes.Buffer
-		writer := multipart.NewWriter(&buf)
-
-		part, err := writer.CreateFormFile("file", filepath.Base(filePath))
-		if err != nil {
-			file.Close()
-			return nil, fmt.Errorf("failed to create form file: %w", err)
-		}
-
-		if _, err := io.Copy(part, file); err != nil {
-			file.Close()
-			return nil, fmt.Errorf("failed to copy file data: %w", err)
-		}
-
-		writer.WriteField("noembed", "")
-		if collectionID != "" {
-			writer.WriteField("collection", collectionID)
-		}
-		writer.Close()
-		file.Close()
-
-		req, err := http.NewRequest("POST", "https://sxcu.net/api/files/create", &buf)
-		if err != nil {
+			pr.Close()
 			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
-		req.Header.Set("Content-Type", writer.FormDataContentType())
+		req.Header.Set("Content-Type", contentType)
 		req.Header.Set("User-Agent", "ImageUploader/1.0 (+https://github.com)")
 
 		resp, err := httpClient.Do(req)
@@ -829,17 +916,17 @@ func uploadFileToSxcuWithRateLimitInfo(filePath, collectionID string, maxRetries
 
 		headers := parseRateLimitHeaders(resp)
 
-		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			lastErr = fmt.Errorf("failed to read response: %w", err)
-			continue
+		if pipeErr := <-errCh; pipeErr != nil {
+			resp.Body.Close()
+			return nil, fmt.Errorf("failed to write multipart: %w", pipeErr)
 		}
 
 		var result SxcuResponse
-		if err := json.Unmarshal(body, &result); err != nil {
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 8192)).Decode(&result); err != nil {
+			resp.Body.Close()
 			return nil, fmt.Errorf("failed to parse response: %w", err)
 		}
+		resp.Body.Close()
 
 		isGlobalError := resp.StatusCode == 429 && (headers.IsGlobal || result.Code == 2)
 		isRateLimitError := resp.StatusCode == 429 || result.Code == 815 || result.Code == 185
@@ -894,20 +981,25 @@ func createSxcuCollection(title, desc string, maxRetries int) (*SxcuCollectionRe
 			continue
 		}
 
-		var buf bytes.Buffer
-		writer := multipart.NewWriter(&buf)
+		pr, pw := io.Pipe()
+		writer := multipart.NewWriter(pw)
+		contentType := writer.FormDataContentType()
 
-		writer.WriteField("title", title)
-		writer.WriteField("desc", desc)
-		writer.WriteField("private", "false")
-		writer.WriteField("unlisted", "false")
-		writer.Close()
+		go func() {
+			defer pw.Close()
+			defer writer.Close()
+			writer.WriteField("title", title)
+			writer.WriteField("desc", desc)
+			writer.WriteField("private", "false")
+			writer.WriteField("unlisted", "false")
+		}()
 
-		req, err := http.NewRequest("POST", "https://sxcu.net/api/collections/create", &buf)
+		req, err := http.NewRequest("POST", "https://sxcu.net/api/collections/create", pr)
 		if err != nil {
+			pr.Close()
 			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
-		req.Header.Set("Content-Type", writer.FormDataContentType())
+		req.Header.Set("Content-Type", contentType)
 		req.Header.Set("User-Agent", "ImageUploader/1.0 (+https://github.com)")
 
 		resp, err := httpClient.Do(req)
@@ -920,17 +1012,12 @@ func createSxcuCollection(title, desc string, maxRetries int) (*SxcuCollectionRe
 
 		headers := parseRateLimitHeaders(resp)
 
-		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			lastErr = fmt.Errorf("failed to read response: %w", err)
-			continue
-		}
-
 		var result SxcuCollectionResponse
-		if err := json.Unmarshal(body, &result); err != nil {
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 8192)).Decode(&result); err != nil {
+			resp.Body.Close()
 			return nil, fmt.Errorf("failed to parse response: %w", err)
 		}
+		resp.Body.Close()
 
 		isGlobalError := resp.StatusCode == 429 && (headers.IsGlobal || result.Code == 2)
 		isRateLimitError := resp.StatusCode == 429 || result.Code == 19
@@ -1006,7 +1093,8 @@ func getImgchestToken() (string, error) {
 		return "", fmt.Errorf("IMGCHEST_API_TOKEN not set. Set the environment variable or create %s with your token", configFile)
 	}
 
-	return strings.TrimSpace(string(data)), nil
+	data = bytes.TrimSpace(data)
+	return string(data), nil
 }
 
 type ImgchestBatchCallback func(batchNum int, totalBatches int, postURL string, imageLinks []string, err error)
@@ -1016,6 +1104,7 @@ func uploadToImgchestBatch(filePaths []string, title string, anonymous bool, max
 	if err != nil {
 		return nil, err
 	}
+	authHeader := "Bearer " + token
 
 	var lastErr error
 
@@ -1028,47 +1117,63 @@ func uploadToImgchestBatch(filePaths []string, title string, anonymous bool, max
 			time.Sleep(time.Duration(check.WaitMs) * time.Millisecond)
 		}
 
-		var buf bytes.Buffer
-		writer := multipart.NewWriter(&buf)
+		pr, pw := io.Pipe()
+		writer := multipart.NewWriter(pw)
+		contentType := writer.FormDataContentType()
 
-		if title != "" {
-			writer.WriteField("title", title)
-		}
-		writer.WriteField("privacy", "hidden")
-		writer.WriteField("nsfw", "true")
-		if anonymous {
-			writer.WriteField("anonymous", "1")
-		} else {
-			writer.WriteField("anonymous", "0")
-		}
+		errCh := make(chan error, 1)
+		go func() {
+			defer pw.Close()
+			defer writer.Close()
 
-		for _, filePath := range filePaths {
-			file, err := os.Open(filePath)
-			if err != nil {
-				return nil, fmt.Errorf("failed to open file %s: %w", filePath, err)
+			if title != "" {
+				writer.WriteField("title", title)
+			}
+			writer.WriteField("privacy", "hidden")
+			writer.WriteField("nsfw", "true")
+			if anonymous {
+				writer.WriteField("anonymous", "1")
+			} else {
+				writer.WriteField("anonymous", "0")
 			}
 
-			part, err := writer.CreateFormFile("images[]", filepath.Base(filePath))
-			if err != nil {
+			bufp := copyBufPool.Get().(*[]byte)
+			defer copyBufPool.Put(bufp)
+
+			for _, filePath := range filePaths {
+				file, err := os.Open(filePath)
+				if err != nil {
+					pw.CloseWithError(err)
+					errCh <- err
+					return
+				}
+
+				part, err := writer.CreateFormFile("images[]", filepath.Base(filePath))
+				if err != nil {
+					file.Close()
+					pw.CloseWithError(err)
+					errCh <- err
+					return
+				}
+
+				_, err = io.CopyBuffer(part, file, *bufp)
 				file.Close()
-				return nil, fmt.Errorf("failed to create form file: %w", err)
+				if err != nil {
+					pw.CloseWithError(err)
+					errCh <- err
+					return
+				}
 			}
+			errCh <- nil
+		}()
 
-			if _, err := io.Copy(part, file); err != nil {
-				file.Close()
-				return nil, fmt.Errorf("failed to copy file data: %w", err)
-			}
-			file.Close()
-		}
-
-		writer.Close()
-
-		req, err := http.NewRequest("POST", "https://api.imgchest.com/v1/post", &buf)
+		req, err := http.NewRequest("POST", "https://api.imgchest.com/v1/post", pr)
 		if err != nil {
+			pr.Close()
 			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
-		req.Header.Set("Content-Type", writer.FormDataContentType())
-		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", contentType)
+		req.Header.Set("Authorization", authHeader)
 
 		resp, err := httpClient.Do(req)
 		if err != nil {
@@ -1081,14 +1186,13 @@ func uploadToImgchestBatch(filePaths []string, title string, anonymous bool, max
 		headers := parseRateLimitHeaders(resp)
 		updateImgchestRateLimit(headers)
 
-		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			lastErr = fmt.Errorf("failed to read response: %w", err)
-			continue
+		if pipeErr := <-errCh; pipeErr != nil {
+			resp.Body.Close()
+			return nil, fmt.Errorf("failed to write multipart: %w", pipeErr)
 		}
 
 		if resp.StatusCode == 429 {
+			resp.Body.Close()
 			if attempt < maxRetries {
 				check := checkImgchestRateLimit()
 				waitMs := check.WaitMs
@@ -1100,6 +1204,12 @@ func uploadToImgchestBatch(filePaths []string, title string, anonymous bool, max
 				continue
 			}
 			return nil, fmt.Errorf("rate limit exceeded")
+		}
+
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 16384))
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read response: %w", err)
 		}
 
 		var result ImgchestPostResponse
@@ -1197,6 +1307,8 @@ func addToImgchestPost(postID string, filePaths []string, maxRetries int) (*Imgc
 	if err != nil {
 		return nil, err
 	}
+	authHeader := "Bearer " + token
+	apiURL := "https://api.imgchest.com/v1/post/" + postID + "/add"
 
 	var lastErr error
 
@@ -1209,37 +1321,52 @@ func addToImgchestPost(postID string, filePaths []string, maxRetries int) (*Imgc
 			time.Sleep(time.Duration(check.WaitMs) * time.Millisecond)
 		}
 
-		var buf bytes.Buffer
-		writer := multipart.NewWriter(&buf)
+		pr, pw := io.Pipe()
+		writer := multipart.NewWriter(pw)
+		contentType := writer.FormDataContentType()
 
-		for _, filePath := range filePaths {
-			file, err := os.Open(filePath)
-			if err != nil {
-				return nil, fmt.Errorf("failed to open file %s: %w", filePath, err)
-			}
+		errCh := make(chan error, 1)
+		go func() {
+			defer pw.Close()
+			defer writer.Close()
 
-			part, err := writer.CreateFormFile("images[]", filepath.Base(filePath))
-			if err != nil {
+			bufp := copyBufPool.Get().(*[]byte)
+			defer copyBufPool.Put(bufp)
+
+			for _, filePath := range filePaths {
+				file, err := os.Open(filePath)
+				if err != nil {
+					pw.CloseWithError(err)
+					errCh <- err
+					return
+				}
+
+				part, err := writer.CreateFormFile("images[]", filepath.Base(filePath))
+				if err != nil {
+					file.Close()
+					pw.CloseWithError(err)
+					errCh <- err
+					return
+				}
+
+				_, err = io.CopyBuffer(part, file, *bufp)
 				file.Close()
-				return nil, fmt.Errorf("failed to create form file: %w", err)
+				if err != nil {
+					pw.CloseWithError(err)
+					errCh <- err
+					return
+				}
 			}
+			errCh <- nil
+		}()
 
-			if _, err := io.Copy(part, file); err != nil {
-				file.Close()
-				return nil, fmt.Errorf("failed to copy file data: %w", err)
-			}
-			file.Close()
-		}
-
-		writer.Close()
-
-		url := fmt.Sprintf("https://api.imgchest.com/v1/post/%s/add", postID)
-		req, err := http.NewRequest("POST", url, &buf)
+		req, err := http.NewRequest("POST", apiURL, pr)
 		if err != nil {
+			pr.Close()
 			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
-		req.Header.Set("Content-Type", writer.FormDataContentType())
-		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", contentType)
+		req.Header.Set("Authorization", authHeader)
 
 		resp, err := httpClient.Do(req)
 		if err != nil {
@@ -1252,14 +1379,13 @@ func addToImgchestPost(postID string, filePaths []string, maxRetries int) (*Imgc
 		headers := parseRateLimitHeaders(resp)
 		updateImgchestRateLimit(headers)
 
-		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			lastErr = fmt.Errorf("failed to read response: %w", err)
-			continue
+		if pipeErr := <-errCh; pipeErr != nil {
+			resp.Body.Close()
+			return nil, fmt.Errorf("failed to write multipart: %w", pipeErr)
 		}
 
 		if resp.StatusCode == 429 {
+			resp.Body.Close()
 			if attempt < maxRetries {
 				check := checkImgchestRateLimit()
 				waitMs := check.WaitMs
@@ -1271,6 +1397,12 @@ func addToImgchestPost(postID string, filePaths []string, maxRetries int) (*Imgc
 				continue
 			}
 			return nil, fmt.Errorf("rate limit exceeded")
+		}
+
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 16384))
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read response: %w", err)
 		}
 
 		var result ImgchestPostResponse
