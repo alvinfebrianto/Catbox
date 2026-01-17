@@ -208,9 +208,10 @@ func (a *App) Run() error {
 					},
 					Label{Text: "Post ID:"},
 					LineEdit{
-						AssignTo:    &a.postIDEdit,
-						ToolTipText: "Add to existing post (leave empty for new)",
-						MinSize:     Size{Width: 80},
+						AssignTo:        &a.postIDEdit,
+						ToolTipText:     "Add to existing post (leave empty for new)",
+						MinSize:         Size{Width: 80},
+						OnTextChanged:   a.onPostIDChanged,
 					},
 				},
 			},
@@ -297,6 +298,26 @@ func (a *App) onAnonymousChanged() {
 			a.postIDEdit.SetText("")
 			a.privacyCombo.SetCurrentIndex(0)
 		}
+		a.updateNsfwCheckState()
+	}
+}
+
+func (a *App) onPostIDChanged() {
+	a.updateNsfwCheckState()
+}
+
+func (a *App) updateNsfwCheckState() {
+	if a.providerCombo.Text() != "imgchest" {
+		return
+	}
+	isNonAnonymous := !a.anonymousCheck.Checked()
+	hasPostID := strings.TrimSpace(a.postIDEdit.Text()) != ""
+	shouldDisable := isNonAnonymous && hasPostID
+	a.nsfwCheck.SetEnabled(!shouldDisable)
+	if shouldDisable {
+		a.nsfwCheck.SetToolTipText("NSFW is set on the post and cannot be changed when adding images")
+	} else {
+		a.nsfwCheck.SetToolTipText("")
 	}
 }
 
