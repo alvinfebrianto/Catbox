@@ -88,6 +88,8 @@ func ApplyDarkTheme(a *App) {
 	applyDarkToCheckBox(a.albumCheck)
 	applyDarkToCheckBox(a.collectionCheck)
 	applyDarkToCheckBox(a.anonymousCheck)
+	applyDarkToCheckBox(a.nsfwCheck)
+	applyDarkToComboBox(a.privacyCombo)
 
 	applyDarkToButton(a.uploadButton)
 

@@ -19,11 +19,14 @@ type App struct {
 	fileListModel   *FileListModel
 	urlEdit         *walk.LineEdit
 	titleEdit       *walk.LineEdit
-	descEdit        *walk.LineEdit
+	descEdit          *walk.LineEdit
+	descComposite     *walk.Composite
 	providerCombo   *walk.ComboBox
 	albumCheck      *walk.CheckBox
 	collectionCheck *walk.CheckBox
 	anonymousCheck  *walk.CheckBox
+	privacyCombo    *walk.ComboBox
+	nsfwCheck       *walk.CheckBox
 	postIDEdit      *walk.LineEdit
 	outputEdit      *walk.TextEdit
 	uploadButton    *walk.PushButton
@@ -136,17 +139,22 @@ func (a *App) Run() error {
 			},
 
 			Composite{
-				Layout: Grid{Columns: 4, MarginsZero: true, Spacing: 6},
+				Layout: HBox{MarginsZero: true, Spacing: 6},
 				Children: []Widget{
 					Label{Text: "Title:", MinSize: Size{Width: 55}},
 					LineEdit{
-						AssignTo:   &a.titleEdit,
-						ColumnSpan: 3,
+						AssignTo: &a.titleEdit,
 					},
+				},
+			},
+
+			Composite{
+				AssignTo: &a.descComposite,
+				Layout:   HBox{MarginsZero: true, Spacing: 6},
+				Children: []Widget{
 					Label{Text: "Description:", MinSize: Size{Width: 55}},
 					LineEdit{
-						AssignTo:   &a.descEdit,
-						ColumnSpan: 3,
+						AssignTo: &a.descEdit,
 					},
 				},
 			},
@@ -178,9 +186,21 @@ func (a *App) Run() error {
 
 			Composite{
 				AssignTo: &a.imgchestOptsComposite,
-				Layout:   HBox{MarginsZero: true, Spacing: 12},
+				Layout:   Grid{Columns: 6, MarginsZero: true, Spacing: 6},
 				Visible:  false,
 				Children: []Widget{
+					Label{Text: "Privacy:"},
+					ComboBox{
+						AssignTo:     &a.privacyCombo,
+						Model:        []string{"hidden", "public", "secret"},
+						CurrentIndex: 0,
+						MinSize:      Size{Width: 70},
+					},
+					CheckBox{
+						AssignTo: &a.nsfwCheck,
+						Text:     "NSFW",
+						Checked:  true,
+					},
 					CheckBox{
 						AssignTo:         &a.anonymousCheck,
 						Text:             "Anonymous",
@@ -190,7 +210,7 @@ func (a *App) Run() error {
 					LineEdit{
 						AssignTo:    &a.postIDEdit,
 						ToolTipText: "Add to existing post (leave empty for new)",
-						MinSize:     Size{Width: 120},
+						MinSize:     Size{Width: 80},
 					},
 				},
 			},
@@ -261,13 +281,21 @@ func (a *App) onProviderChanged() {
 		a.postIDEdit.SetText("")
 	}
 	a.postIDEdit.SetEnabled(isImgchest && !a.anonymousCheck.Checked())
+
+	a.descComposite.SetVisible(!isImgchest)
+	if isImgchest {
+		a.descEdit.SetText("")
+	}
 }
 
 func (a *App) onAnonymousChanged() {
 	if a.providerCombo.Text() == "imgchest" {
-		a.postIDEdit.SetEnabled(!a.anonymousCheck.Checked())
-		if a.anonymousCheck.Checked() {
+		anonymous := a.anonymousCheck.Checked()
+		a.postIDEdit.SetEnabled(!anonymous)
+		a.privacyCombo.SetEnabled(!anonymous)
+		if anonymous {
 			a.postIDEdit.SetText("")
+			a.privacyCombo.SetCurrentIndex(0)
 		}
 	}
 }
@@ -414,9 +442,14 @@ func (a *App) startUpload() {
 			successCount = len(results)
 
 		case "imgchest":
-			anonymous := a.anonymousCheck.Checked()
 			postID := a.postIDEdit.Text()
-			results, groupResult, errors, successCount = a.uploadImgchest(title, anonymous, postID, updateOutput)
+			opts := ImgchestUploadOptions{
+				Title:     title,
+				Privacy:   a.privacyCombo.Text(),
+				NSFW:      a.nsfwCheck.Checked(),
+				Anonymous: a.anonymousCheck.Checked(),
+			}
+			results, groupResult, errors, successCount = a.uploadImgchest(opts, postID, updateOutput)
 		}
 
 		a.mainWindow.Synchronize(func() {
@@ -610,15 +643,30 @@ func (a *App) uploadSxcu(title, desc string, createCollection bool, updateOutput
 	return results, collectionResult, errors
 }
 
-func (a *App) uploadImgchest(title string, anonymous bool, postID string, updateOutput func(string)) ([]string, string, []string, int) {
+func (a *App) uploadImgchest(opts ImgchestUploadOptions, postID string, updateOutput func(string)) ([]string, string, []string, int) {
 	if len(a.selectedFiles) == 0 {
 		return nil, "", nil, 0
 	}
 
-	totalFiles := len(a.selectedFiles)
-	results := make([]string, 0, totalFiles)
+	validFiles := make([]string, 0, len(a.selectedFiles))
 	errors := make([]string, 0, 4)
+
+	for _, filePath := range a.selectedFiles {
+		if err := ValidateImgchestFile(filePath); err != nil {
+			errors = append(errors, fmt.Sprintf("%s: %v", filepath.Base(filePath), err))
+		} else {
+			validFiles = append(validFiles, filePath)
+		}
+	}
+
+	if len(validFiles) == 0 {
+		return nil, "", errors, 0
+	}
+
+	totalFiles := len(validFiles)
+	results := make([]string, 0, totalFiles)
 	var postResult string
+	allImageIDs := make([]string, 0, totalFiles)
 
 	uploadedCount := 0
 	useUploadedCount := false
@@ -656,17 +704,17 @@ func (a *App) uploadImgchest(title string, anonymous bool, postID string, update
 
 	if postID != "" {
 		const batchSize = 20
-		totalBatches := (len(a.selectedFiles) + batchSize - 1) / batchSize
+		totalBatches := (len(validFiles) + batchSize - 1) / batchSize
 		seenLinks := make(map[string]struct{}, totalFiles)
 		useUploadedCount = true
 
 		for batchNum := 1; batchNum <= totalBatches; batchNum++ {
 			start := (batchNum - 1) * batchSize
 			end := start + batchSize
-			if end > len(a.selectedFiles) {
-				end = len(a.selectedFiles)
+			if end > len(validFiles) {
+				end = len(validFiles)
 			}
-			batch := a.selectedFiles[start:end]
+			batch := validFiles[start:end]
 
 			resp, err := addToImgchestPost(postID, batch, 3)
 			if err != nil {
@@ -680,33 +728,43 @@ func (a *App) uploadImgchest(title string, anonymous bool, postID string, update
 					if _, seen := seenLinks[img.Link]; !seen {
 						seenLinks[img.Link] = struct{}{}
 						results = append(results, img.Link)
+						allImageIDs = append(allImageIDs, img.ID)
 					}
 				}
 			}
 			updateOutput(buildOutput())
 		}
+
+		if err := updateImgchestPost(postID, opts, 3); err != nil {
+			errors = append(errors, fmt.Sprintf("Failed to update post settings: %v", err))
+			updateOutput(buildOutput())
+		}
+
 		return results, postResult, errors, uploadedCount
 	}
 
 	seenLinks := make(map[string]struct{}, totalFiles)
-	callback := func(batchNum int, totalBatches int, postURL string, imageLinks []string, err error) {
+	callback := func(batchNum int, totalBatches int, postURL string, imageLinks []string, imageIDs []string, err error) {
 		if err != nil {
 			errors = append(errors, fmt.Sprintf("Batch %d: %s", batchNum, err.Error()))
 		} else {
 			if postResult == "" && postURL != "" {
 				postResult = "Post: " + postURL
 			}
-			for _, link := range imageLinks {
+			for i, link := range imageLinks {
 				if _, seen := seenLinks[link]; !seen {
 					seenLinks[link] = struct{}{}
 					results = append(results, link)
+					if i < len(imageIDs) {
+						allImageIDs = append(allImageIDs, imageIDs[i])
+					}
 				}
 			}
 		}
 		updateOutput(buildOutput())
 	}
 
-	uploadToImgchestWithCallback(a.selectedFiles, title, anonymous, 3, callback)
+	uploadToImgchestWithCallback(validFiles, opts, 3, callback)
 
 	return results, postResult, errors, len(results)
 }

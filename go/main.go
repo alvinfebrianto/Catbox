@@ -1101,13 +1101,29 @@ type ImgchestImage struct {
 
 type ImgchestPostResponse struct {
 	Data struct {
-		ID        string           `json:"id"`
-		Link      string           `json:"link"`
-		DeleteURL string           `json:"delete_url"`
-		Images    []ImgchestImage  `json:"images"`
+		ID        string          `json:"id"`
+		Link      string          `json:"link"`
+		DeleteURL string          `json:"delete_url"`
+		Images    []ImgchestImage `json:"images"`
 	} `json:"data"`
-	Success bool   `json:"success"`
-	Message string `json:"message"`
+	Success json.RawMessage `json:"success"`
+	Message string          `json:"message"`
+}
+
+func (r *ImgchestPostResponse) IsSuccess() bool {
+	if len(r.Success) == 0 {
+		return false
+	}
+	s := string(r.Success)
+	return s == "true" || s == `"true"`
+}
+
+func (r *ImgchestPostResponse) IsFailure() bool {
+	if len(r.Success) == 0 {
+		return false
+	}
+	s := string(r.Success)
+	return s == "false" || s == `"false"`
 }
 
 func (r *ImgchestPostResponse) GetPostURL() string {
@@ -1125,24 +1141,149 @@ func getImgchestToken() (string, error) {
 		return token, nil
 	}
 
-	appData := os.Getenv("APPDATA")
-	if appData == "" {
-		return "", fmt.Errorf("IMGCHEST_API_TOKEN not set and APPDATA not found")
+	exePath, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("failed to get executable path: %w", err)
 	}
+	exeDir := filepath.Dir(exePath)
+	configFile := filepath.Join(exeDir, "..", "imgchest.txt")
 
-	configFile := filepath.Join(appData, "image_uploader_imgchest_token.txt")
 	data, err := os.ReadFile(configFile)
 	if err != nil {
-		return "", fmt.Errorf("IMGCHEST_API_TOKEN not set. Set the environment variable or create %s with your token", configFile)
+		return "", fmt.Errorf("IMGCHEST_API_TOKEN not set. Set the environment variable or create imgchest.txt in parent directory of executable")
 	}
 
 	data = bytes.TrimSpace(data)
 	return string(data), nil
 }
 
-type ImgchestBatchCallback func(batchNum int, totalBatches int, postURL string, imageLinks []string, err error)
+type ImgchestBatchCallback func(batchNum int, totalBatches int, postURL string, imageLinks []string, imageIDs []string, err error)
 
-func uploadToImgchestBatch(filePaths []string, title string, anonymous bool, maxRetries int) (*ImgchestPostResponse, error) {
+type ImgchestUploadOptions struct {
+	Title     string
+	Privacy   string // public, hidden, secret
+	NSFW      bool
+	Anonymous bool
+}
+
+const (
+	imgchestMaxFileSize         = 30 * 1024 * 1024 // 30MB
+	imgchestAllowedExtensions   = ".jpg,.jpeg,.png,.gif,.webp,.mp4"
+)
+
+var imgchestAllowedExtMap = map[string]bool{
+	".jpg": true, ".jpeg": true, ".png": true, ".gif": true, ".webp": true, ".mp4": true,
+}
+
+func ValidateImgchestFile(filePath string) error {
+	ext := strings.ToLower(filepath.Ext(filePath))
+	if !imgchestAllowedExtMap[ext] {
+		return fmt.Errorf("unsupported file type %s (allowed: %s)", ext, imgchestAllowedExtensions)
+	}
+
+	st, err := os.Stat(filePath)
+	if err != nil {
+		return err
+	}
+	if st.Size() > imgchestMaxFileSize {
+		return fmt.Errorf("file too large (%d bytes > 30MB limit)", st.Size())
+	}
+
+	return nil
+}
+
+func updateImgchestPost(postID string, opts ImgchestUploadOptions, maxRetries int) error {
+	if postID == "" {
+		return fmt.Errorf("post ID is required")
+	}
+
+	token, err := getImgchestToken()
+	if err != nil {
+		return err
+	}
+	authHeader := "Bearer " + token
+	apiURL := "https://api.imgchest.com/v1/post/" + postID
+
+	type postUpdate struct {
+		Privacy string `json:"privacy"`
+		NSFW    bool   `json:"nsfw"`
+	}
+
+	privacy := opts.Privacy
+	if privacy == "" {
+		privacy = "hidden"
+	}
+	update := postUpdate{Privacy: privacy, NSFW: opts.NSFW}
+
+	jsonData, err := json.Marshal(update)
+	if err != nil {
+		return fmt.Errorf("failed to marshal update: %w", err)
+	}
+
+	var lastErr error
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		check := checkImgchestRateLimit()
+		if !check.Allowed {
+			if attempt >= maxRetries {
+				return fmt.Errorf("rate limit exceeded, retry after %dms", check.WaitMs)
+			}
+			time.Sleep(time.Duration(check.WaitMs) * time.Millisecond)
+		}
+
+		req, err := http.NewRequest("PATCH", apiURL, bytes.NewReader(jsonData))
+		if err != nil {
+			return fmt.Errorf("failed to create request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", authHeader)
+
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("request failed: %w", err)
+			backoff := calculateExponentialBackoff(attempt, 1000, 120000)
+			time.Sleep(backoff)
+			continue
+		}
+
+		headers := parseRateLimitHeaders(resp)
+		updateImgchestRateLimit(headers)
+
+		if resp.StatusCode == 429 {
+			resp.Body.Close()
+			if attempt < maxRetries {
+				check := checkImgchestRateLimit()
+				waitMs := check.WaitMs
+				if waitMs <= 0 {
+					waitMs = int64(calculateExponentialBackoff(attempt, 1000, 120000) / time.Millisecond)
+				}
+				time.Sleep(time.Duration(waitMs) * time.Millisecond)
+				lastErr = fmt.Errorf("rate limit exceeded")
+				continue
+			}
+			return fmt.Errorf("rate limit exceeded")
+		}
+
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 16384))
+		resp.Body.Close()
+		if err != nil {
+			return fmt.Errorf("failed to read response: %w", err)
+		}
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return fmt.Errorf("API error: status=%d body=%s", resp.StatusCode, string(body))
+		}
+
+		return nil
+	}
+
+	if lastErr != nil {
+		return lastErr
+	}
+	return fmt.Errorf("max retries exceeded")
+}
+
+func uploadToImgchestBatch(filePaths []string, opts ImgchestUploadOptions, maxRetries int) (*ImgchestPostResponse, error) {
 	token, err := getImgchestToken()
 	if err != nil {
 		return nil, err
@@ -1169,12 +1310,20 @@ func uploadToImgchestBatch(filePaths []string, title string, anonymous bool, max
 			defer pw.Close()
 			defer writer.Close()
 
-			if title != "" {
-				writer.WriteField("title", title)
+			if opts.Title != "" {
+				writer.WriteField("title", opts.Title)
 			}
-			writer.WriteField("privacy", "hidden")
-			writer.WriteField("nsfw", "true")
-			if anonymous {
+			privacy := opts.Privacy
+			if privacy == "" {
+				privacy = "hidden"
+			}
+			writer.WriteField("privacy", privacy)
+			if opts.NSFW {
+				writer.WriteField("nsfw", "true")
+			} else {
+				writer.WriteField("nsfw", "false")
+			}
+			if opts.Anonymous {
 				writer.WriteField("anonymous", "1")
 			} else {
 				writer.WriteField("anonymous", "0")
@@ -1255,13 +1404,21 @@ func uploadToImgchestBatch(filePaths []string, title string, anonymous bool, max
 			return nil, fmt.Errorf("failed to read response: %w", err)
 		}
 
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, fmt.Errorf("API error: status=%d body=%s", resp.StatusCode, string(body))
+		}
+
 		var result ImgchestPostResponse
 		if err := json.Unmarshal(body, &result); err != nil {
 			return nil, fmt.Errorf("failed to parse response: %s", string(body))
 		}
 
-		if !result.Success && result.Message != "" {
-			return nil, fmt.Errorf("API error: %s", result.Message)
+		if result.IsFailure() {
+			msg := result.Message
+			if msg == "" {
+				msg = "unknown error"
+			}
+			return nil, fmt.Errorf("API error: %s", msg)
 		}
 
 		return &result, nil
@@ -1273,16 +1430,20 @@ func uploadToImgchestBatch(filePaths []string, title string, anonymous bool, max
 	return nil, fmt.Errorf("max retries exceeded")
 }
 
-func uploadToImgchest(filePaths []string, title string, anonymous bool, maxRetries int) (*ImgchestPostResponse, error) {
-	return uploadToImgchestWithCallback(filePaths, title, anonymous, maxRetries, nil)
+func uploadToImgchest(filePaths []string, opts ImgchestUploadOptions, maxRetries int) (*ImgchestPostResponse, error) {
+	return uploadToImgchestWithCallback(filePaths, opts, maxRetries, nil)
 }
 
-func uploadToImgchestWithCallback(filePaths []string, title string, anonymous bool, maxRetries int, callback ImgchestBatchCallback) (*ImgchestPostResponse, error) {
+func uploadToImgchestWithCallback(filePaths []string, opts ImgchestUploadOptions, maxRetries int, callback ImgchestBatchCallback) (*ImgchestPostResponse, error) {
 	if len(filePaths) == 0 {
 		return nil, fmt.Errorf("no files to upload")
 	}
 
 	const batchSize = 20
+	if opts.Anonymous && len(filePaths) > batchSize {
+		return nil, fmt.Errorf("anonymous uploads are limited to %d files (cannot add files to anonymous posts)", batchSize)
+	}
+
 	totalBatches := (len(filePaths) + batchSize - 1) / batchSize
 
 	firstBatchEnd := batchSize
@@ -1291,10 +1452,10 @@ func uploadToImgchestWithCallback(filePaths []string, title string, anonymous bo
 	}
 	firstBatch := filePaths[:firstBatchEnd]
 
-	resp, err := uploadToImgchestBatch(firstBatch, title, anonymous, maxRetries)
+	resp, err := uploadToImgchestBatch(firstBatch, opts, maxRetries)
 	if err != nil {
 		if callback != nil {
-			callback(1, totalBatches, "", nil, err)
+			callback(1, totalBatches, "", nil, nil, err)
 		}
 		return nil, err
 	}
@@ -1304,10 +1465,12 @@ func uploadToImgchestWithCallback(filePaths []string, title string, anonymous bo
 
 	if callback != nil {
 		var links []string
+		var ids []string
 		for _, img := range resp.Data.Images {
 			links = append(links, img.Link)
+			ids = append(ids, img.ID)
 		}
-		callback(1, totalBatches, resp.GetPostURL(), links, nil)
+		callback(1, totalBatches, resp.GetPostURL(), links, ids, nil)
 	}
 
 	if len(filePaths) > batchSize {
@@ -1324,7 +1487,7 @@ func uploadToImgchestWithCallback(filePaths []string, title string, anonymous bo
 			addResp, err := addToImgchestPost(postID, batch, maxRetries)
 			if err != nil {
 				if callback != nil {
-					callback(batchNum, totalBatches, resp.GetPostURL(), nil, err)
+					callback(batchNum, totalBatches, resp.GetPostURL(), nil, nil, err)
 				}
 				continue
 			}
@@ -1333,10 +1496,12 @@ func uploadToImgchestWithCallback(filePaths []string, title string, anonymous bo
 
 			if callback != nil {
 				var links []string
+				var ids []string
 				for _, img := range addResp.Data.Images {
 					links = append(links, img.Link)
+					ids = append(ids, img.ID)
 				}
-				callback(batchNum, totalBatches, resp.GetPostURL(), links, nil)
+				callback(batchNum, totalBatches, resp.GetPostURL(), links, ids, nil)
 			}
 		}
 	}
@@ -1448,13 +1613,21 @@ func addToImgchestPost(postID string, filePaths []string, maxRetries int) (*Imgc
 			return nil, fmt.Errorf("failed to read response: %w", err)
 		}
 
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, fmt.Errorf("API error: status=%d body=%s", resp.StatusCode, string(body))
+		}
+
 		var result ImgchestPostResponse
 		if err := json.Unmarshal(body, &result); err != nil {
 			return nil, fmt.Errorf("failed to parse response: %s", string(body))
 		}
 
-		if !result.Success && result.Message != "" {
-			return nil, fmt.Errorf("API error: %s", result.Message)
+		if result.IsFailure() {
+			msg := result.Message
+			if msg == "" {
+				msg = "unknown error"
+			}
+			return nil, fmt.Errorf("API error: %s", msg)
 		}
 
 		return &result, nil

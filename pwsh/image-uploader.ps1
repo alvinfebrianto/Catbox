@@ -347,7 +347,7 @@ function Clear-SxcuRateLimitFile {
 function Get-ImgchestToken {
     $token = $env:IMGCHEST_API_TOKEN
     if (-not $token) {
-        $configFile = Join-Path $env:APPDATA "image_uploader_imgchest_token.txt"
+        $configFile = Join-Path $PSScriptRoot "..\imgchest.txt"
         if (Test-Path $configFile) {
             $token = Get-Content $configFile -Raw | ForEach-Object { $_.Trim() }
         }
