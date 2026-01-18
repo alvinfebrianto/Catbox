@@ -22,9 +22,10 @@ type App struct {
 	descEdit        *walk.LineEdit
 	descComposite   *walk.Composite
 	providerCombo   *walk.ComboBox
-	albumCheck      *walk.CheckBox
-	collectionCheck *walk.CheckBox
-	anonymousCheck  *walk.CheckBox
+	albumCheck         *walk.CheckBox
+	collectionCheck    *walk.CheckBox
+	sxcuPrivateCheck *walk.CheckBox
+	anonymousCheck     *walk.CheckBox
 	privacyCombo    *walk.ComboBox
 	nsfwCheck       *walk.CheckBox
 	postIDEdit      *walk.LineEdit
@@ -170,12 +171,18 @@ func (a *App) Run() error {
 
 			Composite{
 				AssignTo: &a.sxcuOptsComposite,
-				Layout:   HBox{MarginsZero: true},
+				Layout:   HBox{MarginsZero: true, Spacing: 12},
 				Visible:  false,
 				Children: []Widget{
 					CheckBox{
-						AssignTo: &a.collectionCheck,
-						Text:     "Create Collection",
+						AssignTo:         &a.collectionCheck,
+						Text:             "Create Collection",
+						Checked:          true,
+						OnCheckedChanged: a.onSxcuCollectionChanged,
+					},
+					CheckBox{
+						AssignTo: &a.sxcuPrivateCheck,
+						Text:     "Private",
 						Checked:  true,
 					},
 				},
@@ -322,6 +329,11 @@ func (a *App) onAnonymousChanged() {
 		}
 		a.updateNsfwCheckState()
 	}
+}
+
+func (a *App) onSxcuCollectionChanged() {
+	createCollection := a.collectionCheck.Checked()
+	a.sxcuPrivateCheck.SetEnabled(createCollection)
 }
 
 func (a *App) onPostIDChanged() {
@@ -474,7 +486,11 @@ func (a *App) startUpload() {
 
 		case "sxcu":
 			createCollection := a.collectionCheck.Checked()
-			results, groupResult, errors = a.uploadSxcu(title, desc, createCollection, updateOutput)
+			sxcuOpts := SxcuCollectionOptions{
+				Private:  a.sxcuPrivateCheck.Checked(),
+				Unlisted: true,
+			}
+			results, groupResult, errors = a.uploadSxcu(title, desc, createCollection, sxcuOpts, updateOutput)
 			successCount = len(results)
 
 		case "imgchest":
@@ -574,12 +590,13 @@ func (a *App) uploadCatbox(urls, title, desc string, createAlbum bool) ([]string
 	return results, albumResult, errors
 }
 
-func (a *App) uploadSxcu(title, desc string, createCollection bool, updateOutput func(string)) ([]string, string, []string) {
+func (a *App) uploadSxcu(title, desc string, createCollection bool, opts SxcuCollectionOptions, updateOutput func(string)) ([]string, string, []string) {
 	totalFiles := len(a.selectedFiles)
 	results := make([]string, 0, totalFiles)
 	errors := make([]string, 0, 4)
 	var collectionResult string
 	var collectionID string
+	var collectionToken string
 	var rateLimitStatus string
 
 	buildOutput := func() string {
@@ -649,11 +666,12 @@ func (a *App) uploadSxcu(title, desc string, createCollection bool, updateOutput
 		if collTitle == "" {
 			collTitle = "Untitled"
 		}
-		coll, err := createSxcuCollection(collTitle, desc, 5)
+		coll, err := createSxcuCollection(collTitle, desc, opts, 5)
 		if err != nil {
 			errors = append(errors, fmt.Sprintf("Collection creation: %v", err))
 		} else {
 			collectionID = coll.CollectionID
+			collectionToken = coll.CollectionToken
 			collectionResult = "Collection: " + coll.GetURL()
 		}
 		updateOutput(buildOutput())
@@ -667,7 +685,7 @@ func (a *App) uploadSxcu(title, desc string, createCollection bool, updateOutput
 			}
 			waitWithCountdown(check.WaitMs, check.Bucket)
 		}
-		resp, err := uploadFileToSxcuWithRateLimitInfo(filePath, collectionID, 5, func(waitMs int64, bucket string) {
+		resp, err := uploadFileToSxcuWithRateLimitInfo(filePath, collectionID, collectionToken, 5, func(waitMs int64, bucket string) {
 			waitWithCountdown(waitMs, bucket)
 		})
 		if err != nil {

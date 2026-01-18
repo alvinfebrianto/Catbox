@@ -750,14 +750,20 @@ type SxcuResponse struct {
 	Code  int    `json:"code"`
 }
 
+type SxcuCollectionOptions struct {
+	Private  bool
+	Unlisted bool
+}
+
 type SxcuCollectionResponse struct {
-	CollectionID string `json:"collection_id"`
-	Title        string `json:"title"`
-	Description  string `json:"description"`
-	Unlisted     bool   `json:"unlisted"`
-	Private      bool   `json:"private"`
-	Error        string `json:"error"`
-	Code         int    `json:"code"`
+	CollectionID    string `json:"collection_id"`
+	CollectionToken string `json:"collection_token"`
+	Title           string `json:"title"`
+	Description     string `json:"description"`
+	Unlisted        bool   `json:"unlisted"`
+	Private         bool   `json:"private"`
+	Error           string `json:"error"`
+	Code            int    `json:"code"`
 }
 
 func (r *SxcuCollectionResponse) GetURL() string {
@@ -767,7 +773,7 @@ func (r *SxcuCollectionResponse) GetURL() string {
 	return ""
 }
 
-func uploadFileToSxcu(filePath, collectionID string, maxRetries int) (*SxcuResponse, error) {
+func uploadFileToSxcu(filePath, collectionID, collectionToken string, maxRetries int) (*SxcuResponse, error) {
 	if !isSxcuAllowedFileType(filePath) {
 		ext := filepath.Ext(filePath)
 		return nil, fmt.Errorf("file type '%s' is not allowed for sxcu.net", ext)
@@ -822,6 +828,9 @@ func uploadFileToSxcu(filePath, collectionID string, maxRetries int) (*SxcuRespo
 			writer.WriteField("noembed", "")
 			if collectionID != "" {
 				writer.WriteField("collection", collectionID)
+			}
+			if collectionToken != "" {
+				writer.WriteField("collection_token", collectionToken)
 			}
 			errCh <- nil
 		}()
@@ -888,7 +897,7 @@ func uploadFileToSxcu(filePath, collectionID string, maxRetries int) (*SxcuRespo
 	return nil, fmt.Errorf("max retries exceeded")
 }
 
-func uploadFileToSxcuWithRateLimitInfo(filePath, collectionID string, maxRetries int, onRateLimitWait func(waitMs int64, bucket string)) (*SxcuResponse, error) {
+func uploadFileToSxcuWithRateLimitInfo(filePath, collectionID, collectionToken string, maxRetries int, onRateLimitWait func(waitMs int64, bucket string)) (*SxcuResponse, error) {
 	if !isSxcuAllowedFileType(filePath) {
 		ext := filepath.Ext(filePath)
 		return nil, fmt.Errorf("file type '%s' is not allowed for sxcu.net", ext)
@@ -951,6 +960,9 @@ func uploadFileToSxcuWithRateLimitInfo(filePath, collectionID string, maxRetries
 			writer.WriteField("noembed", "")
 			if collectionID != "" {
 				writer.WriteField("collection", collectionID)
+			}
+			if collectionToken != "" {
+				writer.WriteField("collection_token", collectionToken)
 			}
 			errCh <- nil
 		}()
@@ -1025,7 +1037,7 @@ func uploadFileToSxcuWithRateLimitInfo(filePath, collectionID string, maxRetries
 	return nil, fmt.Errorf("max retries exceeded")
 }
 
-func createSxcuCollection(title, desc string, maxRetries int) (*SxcuCollectionResponse, error) {
+func createSxcuCollection(title, desc string, opts SxcuCollectionOptions, maxRetries int) (*SxcuCollectionResponse, error) {
 	var lastErr error
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
@@ -1047,8 +1059,8 @@ func createSxcuCollection(title, desc string, maxRetries int) (*SxcuCollectionRe
 			defer writer.Close()
 			writer.WriteField("title", title)
 			writer.WriteField("desc", desc)
-			writer.WriteField("private", "false")
-			writer.WriteField("unlisted", "false")
+			writer.WriteField("private", strconv.FormatBool(opts.Private))
+			writer.WriteField("unlisted", strconv.FormatBool(opts.Unlisted))
 		}()
 
 		req, err := http.NewRequest("POST", "https://sxcu.net/api/collections/create", pr)

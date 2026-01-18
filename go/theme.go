@@ -88,6 +88,7 @@ func ApplyDarkTheme(a *App) {
 	applyDarkToComboBox(a.providerCombo)
 	applyDarkToCheckBox(a.albumCheck)
 	applyDarkToCheckBox(a.collectionCheck)
+	applyDarkToCheckBox(a.sxcuPrivateCheck)
 	applyDarkToCheckBox(a.anonymousCheck)
 	applyDarkToCheckBox(a.nsfwCheck)
 	applyDarkToComboBox(a.privacyCombo)
