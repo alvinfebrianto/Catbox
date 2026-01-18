@@ -130,7 +130,7 @@ func (a *App) Run() error {
 				AssignTo: &a.urlComposite,
 				Layout:   HBox{MarginsZero: true, Spacing: 6},
 				Children: []Widget{
-					Label{Text: "URLs:", MinSize: Size{Width: 55}},
+					Label{Text: "URLs:", MinSize: Size{Width: 70}, MaxSize: Size{Width: 70}},
 					LineEdit{
 						AssignTo:    &a.urlEdit,
 						ToolTipText: "Comma-separated URLs to upload",
@@ -141,7 +141,7 @@ func (a *App) Run() error {
 			Composite{
 				Layout: HBox{MarginsZero: true, Spacing: 6},
 				Children: []Widget{
-					Label{Text: "Title:", MinSize: Size{Width: 55}},
+					Label{Text: "Title:", MinSize: Size{Width: 70}, MaxSize: Size{Width: 70}},
 					LineEdit{
 						AssignTo: &a.titleEdit,
 					},
@@ -152,7 +152,7 @@ func (a *App) Run() error {
 				AssignTo: &a.descComposite,
 				Layout:   HBox{MarginsZero: true, Spacing: 6},
 				Children: []Widget{
-					Label{Text: "Description:", MinSize: Size{Width: 55}},
+					Label{Text: "Description:", MinSize: Size{Width: 70}, MaxSize: Size{Width: 70}},
 					LineEdit{
 						AssignTo: &a.descEdit,
 					},
@@ -192,7 +192,7 @@ func (a *App) Run() error {
 					Composite{
 						Layout: HBox{MarginsZero: true, Spacing: 6},
 						Children: []Widget{
-							Label{Text: "Privacy:", MinSize: Size{Width: 55}},
+							Label{Text: "Privacy:", MinSize: Size{Width: 70}, MaxSize: Size{Width: 70}},
 							ComboBox{
 								AssignTo:     &a.privacyCombo,
 								Model:        []string{"hidden", "public", "secret"},
@@ -217,7 +217,7 @@ func (a *App) Run() error {
 					Composite{
 						Layout: HBox{MarginsZero: true, Spacing: 6},
 						Children: []Widget{
-							Label{Text: "Post ID:", MinSize: Size{Width: 55}},
+							Label{Text: "Post ID:", MinSize: Size{Width: 70}, MaxSize: Size{Width: 70}},
 							LineEdit{
 								AssignTo:      &a.postIDEdit,
 								ToolTipText:   "Add to existing post (leave empty for new)",
