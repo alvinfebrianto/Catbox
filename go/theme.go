@@ -195,11 +195,26 @@ const (
 	WM_CTLCOLORSTATIC  = 0x0138
 	WM_CTLCOLORLISTBOX = 0x0134
 	WM_CTLCOLORBTN     = 0x0135
+	WM_GETMINMAXINFO   = 0x0024
 )
 
 var origWndProcs = make(map[win.HWND]uintptr)
+var mainWindowHwnd win.HWND
+
+type POINT struct {
+	X, Y int32
+}
+
+type MINMAXINFO struct {
+	Reserved     POINT
+	MaxSize      POINT
+	MaxPosition  POINT
+	MinTrackSize POINT
+	MaxTrackSize POINT
+}
 
 func installDarkThemeWndProc(mw *walk.MainWindow) {
+	mainWindowHwnd = mw.Handle()
 	installDarkThemeWndProcFor(mw.Handle())
 }
 
@@ -212,6 +227,27 @@ func installDarkThemeWndProcFor(hwnd win.HWND) {
 
 func darkThemeWndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 	switch msg {
+	case win.WM_NCDESTROY:
+		origProc := origWndProcs[hwnd]
+		delete(origWndProcs, hwnd)
+		if hwnd == mainWindowHwnd {
+			mainWindowHwnd = 0
+		}
+		return win.CallWindowProc(origProc, hwnd, msg, wParam, lParam)
+	case WM_GETMINMAXINFO:
+		if hwnd == mainWindowHwnd && lParam != 0 {
+			mmi := (*MINMAXINFO)(unsafe.Pointer(lParam))
+			origProc := origWndProcs[hwnd]
+			win.CallWindowProc(origProc, hwnd, msg, wParam, lParam)
+			const minWidth, minHeight = 376, 511
+			if mmi.MinTrackSize.X > minWidth {
+				mmi.MinTrackSize.X = minWidth
+			}
+			if mmi.MinTrackSize.Y > minHeight {
+				mmi.MinTrackSize.Y = minHeight
+			}
+			return 0
+		}
 	case WM_CTLCOLOREDIT, WM_CTLCOLORLISTBOX:
 		hdc := win.HDC(wParam)
 		win.SetTextColor(hdc, win.COLORREF(darkTheme.TextFG))

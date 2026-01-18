@@ -186,32 +186,43 @@ func (a *App) Run() error {
 
 			Composite{
 				AssignTo: &a.imgchestOptsComposite,
-				Layout:   Grid{Columns: 6, MarginsZero: true, Spacing: 6},
+				Layout:   VBox{MarginsZero: true, Spacing: 4},
 				Visible:  false,
 				Children: []Widget{
-					Label{Text: "Privacy:"},
-					ComboBox{
-						AssignTo:     &a.privacyCombo,
-						Model:        []string{"hidden", "public", "secret"},
-						CurrentIndex: 0,
-						MinSize:      Size{Width: 70},
+					Composite{
+						Layout: HBox{MarginsZero: true, Spacing: 6},
+						Children: []Widget{
+							Label{Text: "Privacy:"},
+							ComboBox{
+								AssignTo:     &a.privacyCombo,
+								Model:        []string{"hidden", "public", "secret"},
+								CurrentIndex: 0,
+								MinSize:      Size{Width: 70},
+								MaxSize:      Size{Width: 70},
+							},
+							CheckBox{
+								AssignTo: &a.nsfwCheck,
+								Text:     "NSFW",
+								Checked:  true,
+							},
+							CheckBox{
+								AssignTo:         &a.anonymousCheck,
+								Text:             "Anonymous",
+								OnCheckedChanged: a.onAnonymousChanged,
+							},
+							HSpacer{},
+						},
 					},
-					CheckBox{
-						AssignTo: &a.nsfwCheck,
-						Text:     "NSFW",
-						Checked:  true,
-					},
-					CheckBox{
-						AssignTo:         &a.anonymousCheck,
-						Text:             "Anonymous",
-						OnCheckedChanged: a.onAnonymousChanged,
-					},
-					Label{Text: "Post ID:"},
-					LineEdit{
-						AssignTo:        &a.postIDEdit,
-						ToolTipText:     "Add to existing post (leave empty for new)",
-						MinSize:         Size{Width: 80},
-						OnTextChanged:   a.onPostIDChanged,
+					Composite{
+						Layout: HBox{MarginsZero: true, Spacing: 6},
+						Children: []Widget{
+							Label{Text: "Post ID:", MinSize: Size{Width: 55}},
+							LineEdit{
+								AssignTo:      &a.postIDEdit,
+								ToolTipText:   "Add to existing post (leave empty for new)",
+								OnTextChanged: a.onPostIDChanged,
+							},
+						},
 					},
 				},
 			},
@@ -286,6 +297,10 @@ func (a *App) onProviderChanged() {
 	a.descComposite.SetVisible(!isImgchest)
 	if isImgchest {
 		a.descEdit.SetText("")
+	}
+
+	if a.mainWindow != nil {
+		a.mainWindow.Invalidate()
 	}
 }
 

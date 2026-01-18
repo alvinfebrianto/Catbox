@@ -20,17 +20,31 @@ import (
 )
 
 var (
-	user32           = syscall.NewLazyDLL("user32.dll")
-	messageBoxW      = user32.NewProc("MessageBoxW")
-	comdlg32         = syscall.NewLazyDLL("comdlg32.dll")
-	getOpenFileNameW = comdlg32.NewProc("GetOpenFileNameW")
-	dwmapi           = syscall.NewLazyDLL("dwmapi.dll")
-	dwmSetWindowAttr = dwmapi.NewProc("DwmSetWindowAttribute")
-	advapi32         = syscall.NewLazyDLL("advapi32.dll")
-	regOpenKeyExW    = advapi32.NewProc("RegOpenKeyExW")
-	regQueryValueExW = advapi32.NewProc("RegQueryValueExW")
-	regCloseKey      = advapi32.NewProc("RegCloseKey")
+	user32                         = syscall.NewLazyDLL("user32.dll")
+	messageBoxW                    = user32.NewProc("MessageBoxW")
+	setProcessDPIAware             = user32.NewProc("SetProcessDPIAware")
+	setProcessDpiAwarenessContext  = user32.NewProc("SetProcessDpiAwarenessContext")
+	comdlg32                       = syscall.NewLazyDLL("comdlg32.dll")
+	getOpenFileNameW               = comdlg32.NewProc("GetOpenFileNameW")
+	dwmapi                         = syscall.NewLazyDLL("dwmapi.dll")
+	dwmSetWindowAttr               = dwmapi.NewProc("DwmSetWindowAttribute")
+	advapi32                       = syscall.NewLazyDLL("advapi32.dll")
+	regOpenKeyExW                  = advapi32.NewProc("RegOpenKeyExW")
+	regQueryValueExW               = advapi32.NewProc("RegQueryValueExW")
+	regCloseKey                    = advapi32.NewProc("RegCloseKey")
 )
+
+const (
+	DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = ^uintptr(4) // -5
+)
+
+func init() {
+	if setProcessDpiAwarenessContext.Find() == nil {
+		setProcessDpiAwarenessContext.Call(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
+	} else if setProcessDPIAware.Find() == nil {
+		setProcessDPIAware.Call()
+	}
+}
 
 const (
 	MB_OK              = 0x00000000
