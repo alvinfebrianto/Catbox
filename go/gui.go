@@ -186,31 +186,32 @@ func (a *App) Run() error {
 
 			Composite{
 				AssignTo: &a.imgchestOptsComposite,
-				Layout:   VBox{MarginsZero: true, Spacing: 4},
+				Layout:   VBox{MarginsZero: true, Spacing: 8},
 				Visible:  false,
 				Children: []Widget{
 					Composite{
 						Layout: HBox{MarginsZero: true, Spacing: 6},
 						Children: []Widget{
-							Label{Text: "Privacy:"},
+							Label{Text: "Privacy:", MinSize: Size{Width: 55}},
 							ComboBox{
 								AssignTo:     &a.privacyCombo,
 								Model:        []string{"hidden", "public", "secret"},
 								CurrentIndex: 0,
-								MinSize:      Size{Width: 70},
-								MaxSize:      Size{Width: 70},
+								MinSize:      Size{Width: 80},
+								MaxSize:      Size{Width: 80},
 							},
+							HSpacer{},
 							CheckBox{
 								AssignTo: &a.nsfwCheck,
 								Text:     "NSFW",
 								Checked:  true,
 							},
+							HSpacer{},
 							CheckBox{
 								AssignTo:         &a.anonymousCheck,
 								Text:             "Anonymous",
 								OnCheckedChanged: a.onAnonymousChanged,
 							},
-							HSpacer{},
 						},
 					},
 					Composite{
