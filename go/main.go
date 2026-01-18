@@ -1150,9 +1150,15 @@ func (r *ImgchestPostResponse) GetPostURL() string {
 	return ""
 }
 
+var customImgchestToken string
+
+func SetImgchestToken(token string) {
+	customImgchestToken = token
+}
+
 func getImgchestToken() (string, error) {
-	if token := os.Getenv("IMGCHEST_API_TOKEN"); token != "" {
-		return token, nil
+	if customImgchestToken != "" {
+		return customImgchestToken, nil
 	}
 
 	exePath, err := os.Executable()
@@ -1164,7 +1170,7 @@ func getImgchestToken() (string, error) {
 
 	data, err := os.ReadFile(configFile)
 	if err != nil {
-		return "", fmt.Errorf("IMGCHEST_API_TOKEN not set. Set the environment variable or create imgchest.txt in parent directory of executable")
+		return "", fmt.Errorf("imgchest.txt not found. Create imgchest.txt next to the executable or enter token in UI")
 	}
 
 	data = bytes.TrimSpace(data)
@@ -1218,18 +1224,25 @@ func updateImgchestPost(postID string, opts ImgchestUploadOptions, maxRetries in
 	authHeader := "Bearer " + token
 	apiURL := "https://api.imgchest.com/v1/post/" + postID
 
-	type postUpdate struct {
-		Privacy string `json:"privacy"`
-		NSFW    bool   `json:"nsfw"`
-	}
-
 	privacy := opts.Privacy
 	if privacy == "" {
 		privacy = "hidden"
 	}
-	update := postUpdate{Privacy: privacy, NSFW: opts.NSFW}
 
-	jsonData, err := json.Marshal(update)
+	nsfwStr := "false"
+	if opts.NSFW {
+		nsfwStr = "true"
+	}
+
+	payload := map[string]interface{}{
+		"privacy": privacy,
+		"nsfw":    nsfwStr,
+	}
+	if opts.Title != "" {
+		payload["title"] = opts.Title
+	}
+
+	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("failed to marshal update: %w", err)
 	}
@@ -1250,6 +1263,7 @@ func updateImgchestPost(postID string, opts ImgchestUploadOptions, maxRetries in
 			return fmt.Errorf("failed to create request: %w", err)
 		}
 		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
 		req.Header.Set("Authorization", authHeader)
 
 		resp, err := httpClient.Do(req)
@@ -1278,7 +1292,7 @@ func updateImgchestPost(postID string, opts ImgchestUploadOptions, maxRetries in
 			return fmt.Errorf("rate limit exceeded")
 		}
 
-		body, err := io.ReadAll(io.LimitReader(resp.Body, 16384))
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 		resp.Body.Close()
 		if err != nil {
 			return fmt.Errorf("failed to read response: %w", err)
@@ -1286,6 +1300,22 @@ func updateImgchestPost(postID string, opts ImgchestUploadOptions, maxRetries in
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			return fmt.Errorf("API error: status=%d body=%s", resp.StatusCode, string(body))
+		}
+
+		if len(body) > 0 {
+			var result struct {
+				Success json.RawMessage `json:"success"`
+				Message string          `json:"message"`
+			}
+			if json.Unmarshal(body, &result) == nil {
+				if s := string(result.Success); s == "false" || s == `"false"` {
+					msg := result.Message
+					if msg == "" {
+						msg = "unknown error"
+					}
+					return fmt.Errorf("API update failed: %s", msg)
+				}
+			}
 		}
 
 		return nil
@@ -1412,7 +1442,7 @@ func uploadToImgchestBatch(filePaths []string, opts ImgchestUploadOptions, maxRe
 			return nil, fmt.Errorf("rate limit exceeded")
 		}
 
-		body, err := io.ReadAll(io.LimitReader(resp.Body, 16384))
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 		resp.Body.Close()
 		if err != nil {
 			return nil, fmt.Errorf("failed to read response: %w", err)
@@ -1621,7 +1651,7 @@ func addToImgchestPost(postID string, filePaths []string, maxRetries int) (*Imgc
 			return nil, fmt.Errorf("rate limit exceeded")
 		}
 
-		body, err := io.ReadAll(io.LimitReader(resp.Body, 16384))
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 		resp.Body.Close()
 		if err != nil {
 			return nil, fmt.Errorf("failed to read response: %w", err)

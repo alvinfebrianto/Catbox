@@ -81,6 +81,7 @@ func ApplyDarkTheme(a *App) {
 	applyDarkToLineEdit(a.titleEdit)
 	applyDarkToLineEdit(a.descEdit)
 	applyDarkToLineEdit(a.postIDEdit)
+	applyDarkToLineEdit(a.imgchestTokenEdit)
 
 	applyDarkToTextEdit(a.outputEdit)
 	applyDarkToListBox(a.fileListBox)

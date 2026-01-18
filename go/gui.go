@@ -19,8 +19,8 @@ type App struct {
 	fileListModel   *FileListModel
 	urlEdit         *walk.LineEdit
 	titleEdit       *walk.LineEdit
-	descEdit          *walk.LineEdit
-	descComposite     *walk.Composite
+	descEdit        *walk.LineEdit
+	descComposite   *walk.Composite
 	providerCombo   *walk.ComboBox
 	albumCheck      *walk.CheckBox
 	collectionCheck *walk.CheckBox
@@ -28,6 +28,7 @@ type App struct {
 	privacyCombo    *walk.ComboBox
 	nsfwCheck       *walk.CheckBox
 	postIDEdit      *walk.LineEdit
+	imgchestTokenEdit *walk.LineEdit
 	outputEdit      *walk.TextEdit
 	uploadButton    *walk.PushButton
 	selectedFiles   []string
@@ -95,25 +96,22 @@ func (a *App) Run() error {
 					},
 					HSpacer{},
 					PushButton{
-						Text:        "＋",
-						ToolTipText: "Add Files",
-						OnClicked:   a.onSelectFiles,
-						MinSize:     Size{Width: 32},
-						MaxSize:     Size{Width: 32},
+						Text:      "＋",
+						OnClicked: a.onSelectFiles,
+						MinSize:   Size{Width: 32},
+						MaxSize:   Size{Width: 32},
 					},
 					PushButton{
-						Text:        "－",
-						ToolTipText: "Remove Selected",
-						OnClicked:   a.onRemoveSelected,
-						MinSize:     Size{Width: 32},
-						MaxSize:     Size{Width: 32},
+						Text:      "－",
+						OnClicked: a.onRemoveSelected,
+						MinSize:   Size{Width: 32},
+						MaxSize:   Size{Width: 32},
 					},
 					PushButton{
-						Text:        "✕",
-						ToolTipText: "Clear All",
-						OnClicked:   a.onClearAll,
-						MinSize:     Size{Width: 32},
-						MaxSize:     Size{Width: 32},
+						Text:      "✕",
+						OnClicked: a.onClearAll,
+						MinSize:   Size{Width: 32},
+						MaxSize:   Size{Width: 32},
 					},
 				},
 			},
@@ -132,8 +130,7 @@ func (a *App) Run() error {
 				Children: []Widget{
 					Label{Text: "URLs:", MinSize: Size{Width: 70}, MaxSize: Size{Width: 70}},
 					LineEdit{
-						AssignTo:    &a.urlEdit,
-						ToolTipText: "Comma-separated URLs to upload",
+						AssignTo: &a.urlEdit,
 					},
 				},
 			},
@@ -192,10 +189,20 @@ func (a *App) Run() error {
 					Composite{
 						Layout: HBox{MarginsZero: true, Spacing: 6},
 						Children: []Widget{
+							Label{Text: "API Token:", MinSize: Size{Width: 70}, MaxSize: Size{Width: 70}},
+							LineEdit{
+								AssignTo:     &a.imgchestTokenEdit,
+								PasswordMode: true,
+							},
+						},
+					},
+					Composite{
+						Layout: HBox{MarginsZero: true, Spacing: 6},
+						Children: []Widget{
 							Label{Text: "Privacy:", MinSize: Size{Width: 70}, MaxSize: Size{Width: 70}},
 							ComboBox{
 								AssignTo:     &a.privacyCombo,
-								Model:        []string{"hidden", "public", "secret"},
+								Model:        []string{"Hidden", "Public", "Secret"},
 								CurrentIndex: 0,
 								MinSize:      Size{Width: 80},
 								MaxSize:      Size{Width: 80},
@@ -220,7 +227,6 @@ func (a *App) Run() error {
 							Label{Text: "Post ID:", MinSize: Size{Width: 70}, MaxSize: Size{Width: 70}},
 							LineEdit{
 								AssignTo:      &a.postIDEdit,
-								ToolTipText:   "Add to existing post (leave empty for new)",
 								OnTextChanged: a.onPostIDChanged,
 							},
 						},
@@ -326,15 +332,8 @@ func (a *App) updateNsfwCheckState() {
 	if a.providerCombo.Text() != "imgchest" {
 		return
 	}
-	isNonAnonymous := !a.anonymousCheck.Checked()
-	hasPostID := strings.TrimSpace(a.postIDEdit.Text()) != ""
-	shouldDisable := isNonAnonymous && hasPostID
-	a.nsfwCheck.SetEnabled(!shouldDisable)
-	if shouldDisable {
-		a.nsfwCheck.SetToolTipText("NSFW is set on the post and cannot be changed when adding images")
-	} else {
-		a.nsfwCheck.SetToolTipText("")
-	}
+	a.nsfwCheck.SetEnabled(true)
+	a.nsfwCheck.SetToolTipText("")
 }
 
 func (a *App) onSelectFiles() {
@@ -480,9 +479,11 @@ func (a *App) startUpload() {
 
 		case "imgchest":
 			postID := a.postIDEdit.Text()
+			customToken := strings.TrimSpace(a.imgchestTokenEdit.Text())
+			SetImgchestToken(customToken)
 			opts := ImgchestUploadOptions{
 				Title:     title,
-				Privacy:   a.privacyCombo.Text(),
+				Privacy:   strings.ToLower(a.privacyCombo.Text()),
 				NSFW:      a.nsfwCheck.Checked(),
 				Anonymous: a.anonymousCheck.Checked(),
 			}
