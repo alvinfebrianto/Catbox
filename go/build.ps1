@@ -8,8 +8,8 @@ Write-Host "Installing rsrc tool..." -ForegroundColor Cyan
 go install github.com/akavel/rsrc@latest
 if ($LASTEXITCODE -ne 0) { exit 1 }
 
-Write-Host "Embedding manifest..." -ForegroundColor Cyan
-rsrc -manifest image-uploader.manifest -o rsrc.syso
+Write-Host "Embedding manifest + icon..." -ForegroundColor Cyan
+rsrc -manifest image-uploader.manifest -ico favicon.ico -o rsrc.syso
 if ($LASTEXITCODE -ne 0) { exit 1 }
 
 Write-Host "Building executable..." -ForegroundColor Cyan
