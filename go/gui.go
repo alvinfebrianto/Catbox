@@ -71,9 +71,12 @@ func NewApp() *App {
 func (a *App) Run() error {
 	providers := []string{"catbox", "sxcu", "imgchest"}
 
+	icon, _ := walk.NewIconFromFile("favicon.ico")
+
 	err := MainWindow{
 		AssignTo: &a.mainWindow,
 		Title:    "Image Uploader",
+		Icon:     icon,
 		MinSize:  Size{Width: 360, Height: 480},
 		Size:     Size{Width: 380, Height: 520},
 		Layout:   VBox{Margins: Margins{Left: 12, Top: 12, Right: 12, Bottom: 12}, Spacing: 8},
