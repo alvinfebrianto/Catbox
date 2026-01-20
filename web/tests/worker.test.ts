@@ -3,13 +3,30 @@ import workerDefault from '../src/worker';
 import { CORS_HEADERS } from '../src/types';
 
 const originalFetch = globalThis.fetch;
+const TEST_PROXY_TOKEN = 'test-proxy-auth-token';
+const TEST_ORIGIN = 'http://localhost:3000';
 
 function setMockFetch(fn: (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>): void {
   (globalThis as unknown as { fetch: typeof fetch }).fetch = fn as typeof fetch;
 }
 
 function createRequest(url: string, options: RequestInit = {}): Request {
-  return new Request(`https://worker.test${url}`, options);
+  const headers = new Headers(options.headers || {});
+  if (!headers.has('Origin')) {
+    headers.set('Origin', TEST_ORIGIN);
+  }
+  if (!headers.has('X-Proxy-Auth') && options.method === 'POST') {
+    headers.set('X-Proxy-Auth', TEST_PROXY_TOKEN);
+  }
+  return new Request(`https://worker.test${url}`, { ...options, headers });
+}
+
+function createRequestWithoutAuth(url: string, options: RequestInit = {}): Request {
+  const headers = new Headers(options.headers || {});
+  if (!headers.has('Origin')) {
+    headers.set('Origin', TEST_ORIGIN);
+  }
+  return new Request(`https://worker.test${url}`, { ...options, headers });
 }
 
 function createFormData(entries: Record<string, string | Blob>): FormData {
@@ -58,23 +75,6 @@ function createMockDurableObjectNamespace(): DurableObjectNamespace {
             return new Response('Missing fileToUpload parameter', { status: 400, headers: mockCORSHeaders });
           }
           return new Response('https://files.catbox.moe/abc123.png', { headers: mockCORSHeaders });
-        }
-        if (reqtype === 'urlupload') {
-          const urlParam = formData.get('url');
-          if (!urlParam) {
-            return new Response('Missing url parameter', { status: 400, headers: mockCORSHeaders });
-          }
-          return new Response('https://files.catbox.moe/abc123.png', { headers: mockCORSHeaders });
-        }
-        if (reqtype === 'createalbum') {
-          return new Response('https://catbox.moe/c/abcdef', { headers: mockCORSHeaders });
-        }
-        if (reqtype === 'deletefiles') {
-          const files = formData.get('files');
-          if (!files) {
-            return new Response('Missing files parameter', { status: 400, headers: mockCORSHeaders });
-          }
-          return new Response('Files deleted', { headers: mockCORSHeaders });
         }
         return new Response(JSON.stringify({ error: 'Unknown request type' }), {
           status: 400,
@@ -143,6 +143,14 @@ function createMockDurableObjectNamespace(): DurableObjectNamespace {
   return namespace as unknown as DurableObjectNamespace;
 }
 
+function createTestEnv(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    PROXY_AUTH_TOKEN: TEST_PROXY_TOKEN,
+    RATE_LIMITER: createMockDurableObjectNamespace(),
+    ...overrides,
+  };
+}
+
 describe('CORS and routing', () => {
   afterEach(() => {
     globalThis.fetch = originalFetch;
@@ -150,17 +158,17 @@ describe('CORS and routing', () => {
 
   test('OPTIONS returns CORS preflight response', async () => {
     const request = createRequest('/any-path', { method: 'OPTIONS' });
-    const response = await workerDefault.fetch(request, { RATE_LIMITER: createMockDurableObjectNamespace() });
+    const response = await workerDefault.fetch(request, createTestEnv());
 
     expect(response.status).toBe(204);
-    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe(TEST_ORIGIN);
     expect(response.headers.get('Access-Control-Allow-Methods')).toBe('POST, OPTIONS');
   });
 
   test('unknown routes return 404', async () => {
     const response = await workerDefault.fetch(
       createRequest('/unknown', { method: 'POST' }),
-      { RATE_LIMITER: createMockDurableObjectNamespace() }
+      createTestEnv()
     );
     expect(response.status).toBe(404);
   });
@@ -168,9 +176,19 @@ describe('CORS and routing', () => {
   test('GET requests return 404', async () => {
     const response = await workerDefault.fetch(
       createRequest('/upload/catbox', { method: 'GET' }),
-      { RATE_LIMITER: createMockDurableObjectNamespace() }
+      createTestEnv()
     );
     expect(response.status).toBe(404);
+  });
+
+  test('POST without X-Proxy-Auth returns 401', async () => {
+    const response = await workerDefault.fetch(
+      createRequestWithoutAuth('/upload/catbox', { method: 'POST', body: createFormData({ reqtype: 'fileupload' }) }),
+      createTestEnv()
+    );
+    expect(response.status).toBe(401);
+    const json = await response.json() as { error: string };
+    expect(json.error).toBe('Unauthorized');
   });
 });
 
@@ -184,52 +202,46 @@ describe('Catbox proxy', () => {
       Promise.resolve(createMockResponse('https://files.catbox.moe/abc123.png'))
     ));
 
-    const formData = createFormData({
-      reqtype: 'fileupload',
-      fileToUpload: new Blob(['test content']),
-    });
+    const formData = new FormData();
+    formData.append('reqtype', 'fileupload');
+    formData.append('fileToUpload', new File(['test content'], 'test.png', { type: 'image/png' }));
+
     const response = await workerDefault.fetch(
       createRequest('/upload/catbox', { method: 'POST', body: formData }),
-      { RATE_LIMITER: createMockDurableObjectNamespace() }
+      createTestEnv()
     );
 
     expect(response.status).toBe(200);
     expect(await response.text()).toBe('https://files.catbox.moe/abc123.png');
-    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe(TEST_ORIGIN);
   });
 
-  test('validates required parameters', async () => {
-    const testCases = [
-      { formData: { reqtype: 'fileupload' }, expectedError: 'Missing fileToUpload' },
-      { formData: { reqtype: 'urlupload' }, expectedError: 'Missing url' },
-      { formData: { reqtype: 'deletefiles' }, expectedError: 'Missing files' },
-    ];
-
-    for (const { formData, expectedError } of testCases) {
-      const response = await workerDefault.fetch(
-        createRequest('/upload/catbox', { method: 'POST', body: createFormData(formData as Record<string, string>) }),
-        { RATE_LIMITER: createMockDurableObjectNamespace() }
-      );
-      expect(response.status).toBe(400);
-      expect(await response.text()).toContain(expectedError);
-    }
-  });
-
-  test('album creation includes all parameters', async () => {
+  test('rejects urlupload reqtype (SSRF prevention)', async () => {
     const formData = createFormData({
-      reqtype: 'createalbum',
-      files: 'abc.png def.png',
-      title: 'My Album',
-      desc: 'Description',
-      userhash: 'myhash',
+      reqtype: 'urlupload',
+      url: 'https://example.com/image.png',
     });
     const response = await workerDefault.fetch(
       createRequest('/upload/catbox', { method: 'POST', body: formData }),
-      { RATE_LIMITER: createMockDurableObjectNamespace() }
+      createTestEnv()
     );
+    expect(response.status).toBe(400);
+    const json = await response.json() as { error: string };
+    expect(json.error).toBe('Unknown request type');
+  });
 
-    expect(response.status).toBe(200);
-    expect(await response.text()).toBe('https://catbox.moe/c/abcdef');
+  test('rejects createalbum reqtype (SSRF prevention)', async () => {
+    const formData = createFormData({
+      reqtype: 'createalbum',
+      files: 'abc.png def.png',
+    });
+    const response = await workerDefault.fetch(
+      createRequest('/upload/catbox', { method: 'POST', body: formData }),
+      createTestEnv()
+    );
+    expect(response.status).toBe(400);
+    const json = await response.json() as { error: string };
+    expect(json.error).toBe('Unknown request type');
   });
 });
 
@@ -248,19 +260,22 @@ describe('SXCU proxy', () => {
         method: 'POST',
         body: createFormData({ title: 'test' }),
       }),
-      { RATE_LIMITER: createMockDurableObjectNamespace() }
+      createTestEnv()
     );
 
     expect(response.status).toBe(200);
   });
 
   test('file upload with rate limit headers', async () => {
+    const formData = new FormData();
+    formData.append('file', new File(['test content'], 'test.png', { type: 'image/png' }));
+
     const response = await workerDefault.fetch(
       createRequest('/upload/sxcu/files', {
         method: 'POST',
-        body: createFormData({ file: new Blob(['test']) }),
+        body: formData,
       }),
-      { RATE_LIMITER: createMockDurableObjectNamespace() }
+      createTestEnv()
     );
 
     expect(response.status).toBe(200);
@@ -275,11 +290,13 @@ describe('Imgchest proxy', () => {
 
   test('requires API token', async () => {
     const formData = new FormData();
-    formData.append('images[]', new Blob(['test']));
+    formData.append('images[]', new File(['test'], 'test.png', { type: 'image/png' }));
+
+    const testEnv = { PROXY_AUTH_TOKEN: TEST_PROXY_TOKEN, RATE_LIMITER: createMockDurableObjectNamespace() };
 
     const response = await workerDefault.fetch(
       createRequest('/upload/imgchest/post', { method: 'POST', body: formData }),
-      { RATE_LIMITER: createMockDurableObjectNamespace() }
+      testEnv
     );
 
     expect(response.status).toBe(401);
@@ -289,11 +306,11 @@ describe('Imgchest proxy', () => {
 
   test('post creation with token from env', async () => {
     const formData = new FormData();
-    formData.append('images[]', new Blob(['test']));
+    formData.append('images[]', new File(['test'], 'test.png', { type: 'image/png' }));
 
     const response = await workerDefault.fetch(
       createRequest('/upload/imgchest/post', { method: 'POST', body: formData }),
-      { IMGCHEST_API_TOKEN: 'token123', RATE_LIMITER: createMockDurableObjectNamespace() }
+      createTestEnv({ IMGCHEST_API_TOKEN: 'token123' })
     );
 
     expect(response.status).toBe(200);
@@ -301,26 +318,31 @@ describe('Imgchest proxy', () => {
 
   test('post creation with custom authorization header', async () => {
     const formData = new FormData();
-    formData.append('images[]', new Blob(['test']));
+    formData.append('images[]', new File(['test'], 'test.png', { type: 'image/png' }));
+
+    const headers = new Headers();
+    headers.set('Origin', TEST_ORIGIN);
+    headers.set('X-Proxy-Auth', TEST_PROXY_TOKEN);
+    headers.set('Authorization', 'Bearer custom-token');
 
     const request = new Request('https://worker.test/upload/imgchest/post', {
       method: 'POST',
       body: formData,
-      headers: { 'Authorization': 'Bearer custom-token' },
+      headers,
     });
 
-    const response = await workerDefault.fetch(request, { RATE_LIMITER: createMockDurableObjectNamespace() });
+    const response = await workerDefault.fetch(request, createTestEnv());
 
     expect(response.status).toBe(200);
   });
 
   test('sends authorization header from env', async () => {
     const formData = new FormData();
-    formData.append('images[]', new Blob(['test']));
+    formData.append('images[]', new File(['test'], 'test.png', { type: 'image/png' }));
 
     const response = await workerDefault.fetch(
       createRequest('/upload/imgchest/post', { method: 'POST', body: formData }),
-      { IMGCHEST_API_TOKEN: 'secret-token', RATE_LIMITER: createMockDurableObjectNamespace() }
+      createTestEnv({ IMGCHEST_API_TOKEN: 'secret-token' })
     );
 
     expect(response.status).toBe(200);
@@ -330,11 +352,11 @@ describe('Imgchest proxy', () => {
 
   test('add images to existing post', async () => {
     const formData = new FormData();
-    formData.append('images[]', new Blob(['test']));
+    formData.append('images[]', new File(['test'], 'test.png', { type: 'image/png' }));
 
     const response = await workerDefault.fetch(
       createRequest('/upload/imgchest/post/myPostId/add', { method: 'POST', body: formData }),
-      { IMGCHEST_API_TOKEN: 'token', RATE_LIMITER: createMockDurableObjectNamespace() }
+      createTestEnv({ IMGCHEST_API_TOKEN: 'token' })
     );
 
     expect(response.status).toBe(200);
@@ -344,9 +366,9 @@ describe('Imgchest proxy', () => {
 });
 
 describe('Rate limiter not configured', () => {
-  test('returns 500 when rate limiter is not available', async () => {
+  test('returns 500 when PROXY_AUTH_TOKEN is missing', async () => {
     const formData = new FormData();
-    formData.append('images[]', new Blob(['test']));
+    formData.append('images[]', new File(['test'], 'test.png', { type: 'image/png' }));
 
     const response = await workerDefault.fetch(
       createRequest('/upload/imgchest/post', { method: 'POST', body: formData }),
@@ -355,6 +377,6 @@ describe('Rate limiter not configured', () => {
 
     expect(response.status).toBe(500);
     const json = await response.json() as { error: string };
-    expect(json.error).toBe('Rate limiter not configured');
+    expect(json.error).toBe('Server misconfigured');
   });
 });

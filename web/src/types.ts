@@ -115,10 +115,30 @@ export interface WorkerEnv {
   RATE_LIMITER?: DurableObjectNamespace;
 }
 
+const ALLOWED_ORIGINS = new Set([
+  'https://image-uploader.alvinpelajar.workers.dev',
+  'http://localhost:3000',
+]);
+
+export function getCorsHeaders(origin: string | null): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Proxy-Auth',
+    'Access-Control-Max-Age': '86400',
+    'Vary': 'Origin',
+  };
+
+  if (origin && ALLOWED_ORIGINS.has(origin)) {
+    headers['Access-Control-Allow-Origin'] = origin;
+  }
+
+  return headers;
+}
+
 export const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Proxy-Auth',
   'Access-Control-Max-Age': '86400',
 };
 
@@ -128,6 +148,84 @@ export const ALLOWED_EXTENSIONS = [
 ];
 
 export const MAX_IMGCHEST_IMAGES_PER_REQUEST = 20;
+
+export const MAX_FILE_SIZE = 50 * 1024 * 1024;
+export const MAX_TOTAL_SIZE = 100 * 1024 * 1024;
+export const MAX_FILE_COUNT = 50;
+
+export const IMGCHEST_MAX_FILE_SIZE = 30 * 1024 * 1024;
+export const IMGCHEST_ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.mp4'];
+
+export interface FileValidationResult {
+  ok: boolean;
+  error?: string;
+}
+
+export function validateFiles(
+  files: File[],
+  maxFiles: number = MAX_FILE_COUNT,
+  maxTotal: number = MAX_TOTAL_SIZE,
+  maxEach: number = MAX_FILE_SIZE
+): FileValidationResult {
+  if (files.length === 0) {
+    return { ok: false, error: 'No files provided' };
+  }
+
+  if (files.length > maxFiles) {
+    return { ok: false, error: `Too many files (max ${maxFiles})` };
+  }
+
+  let total = 0;
+  for (const f of files) {
+    total += f.size;
+
+    if (f.size <= 0) {
+      return { ok: false, error: 'Empty file' };
+    }
+
+    if (f.size > maxEach) {
+      return { ok: false, error: `File too large: ${f.name}` };
+    }
+
+    if (total > maxTotal) {
+      return { ok: false, error: 'Request too large' };
+    }
+
+    const ext = '.' + (f.name.split('.').pop() || '').toLowerCase();
+    if (!ALLOWED_EXTENSIONS.includes(ext)) {
+      return { ok: false, error: `Disallowed file type: ${f.name}` };
+    }
+  }
+
+  return { ok: true };
+}
+
+export function validateImgchestFiles(files: File[]): FileValidationResult {
+  if (files.length === 0) {
+    return { ok: false, error: 'No files provided' };
+  }
+
+  if (files.length > MAX_FILE_COUNT) {
+    return { ok: false, error: `Too many files (max ${MAX_FILE_COUNT})` };
+  }
+
+  for (const f of files) {
+    if (f.size <= 0) {
+      return { ok: false, error: 'Empty file' };
+    }
+
+    if (f.size > IMGCHEST_MAX_FILE_SIZE) {
+      return { ok: false, error: `File too large: ${f.name} (max 30MB for Imgchest)` };
+    }
+
+    const ext = '.' + (f.name.split('.').pop() || '').toLowerCase();
+    if (!IMGCHEST_ALLOWED_EXTENSIONS.includes(ext)) {
+      return { ok: false, error: `Unsupported file type for Imgchest: ${f.name}. Only jpg, jpeg, png, gif, webp, and mp4 are allowed.` };
+    }
+  }
+
+  return { ok: true };
+}
 
 export function parseRateLimitHeaders(headers: Headers): RateLimitHeaders {
   const result: RateLimitHeaders = {};

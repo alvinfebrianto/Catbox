@@ -13,6 +13,9 @@ import {
   calculateWaitTimeFromHeaders,
   isRateLimitExpired,
   createRateLimitEntry,
+  getCorsHeaders,
+  validateFiles,
+  validateImgchestFiles,
 } from './types';
 
 const SXCU_GLOBAL_BUCKET = '__sxcu_global__';
@@ -70,36 +73,38 @@ export class RateLimiter {
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method;
+    const origin = request.headers.get('X-Origin') || request.headers.get('Origin');
+    const corsHeaders = getCorsHeaders(origin);
 
     if (method === 'OPTIONS') {
-      return new Response(null, { headers: CORS_HEADERS, status: 204 });
+      return new Response(null, { headers: corsHeaders, status: 204 });
     }
 
     this.cleanupExpiredEntries();
 
     try {
       if (method === 'POST' && path === '/upload/imgchest/post') {
-        return await this.handleImgchestPost(request);
+        return await this.handleImgchestPost(request, corsHeaders);
       }
 
       if (method === 'POST' && path.startsWith('/upload/imgchest/post/') && path.endsWith('/add')) {
-        return await this.handleImgchestAdd(request);
+        return await this.handleImgchestAdd(request, corsHeaders);
       }
 
       if (method === 'POST' && path === '/upload/sxcu/collections') {
-        return await this.handleSxcuCollections(request);
+        return await this.handleSxcuCollections(request, corsHeaders);
       }
 
       if (method === 'POST' && path === '/upload/sxcu/files') {
-        return await this.handleSxcuFiles(request);
+        return await this.handleSxcuFiles(request, corsHeaders);
       }
 
-      return new Response('Not Found', { status: 404, headers: CORS_HEADERS });
+      return new Response('Not Found', { status: 404, headers: corsHeaders });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       return new Response(JSON.stringify({ error: message }), {
         status: 500,
-        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
   }
@@ -317,8 +322,8 @@ export class RateLimiter {
     }
   }
 
-  private createResponseHeaders(apiHeaders: Headers): Headers {
-    const responseHeaders = new Headers(CORS_HEADERS);
+  private createResponseHeaders(apiHeaders: Headers, corsHeaders: Record<string, string>): Headers {
+    const responseHeaders = new Headers(corsHeaders);
     responseHeaders.set('Content-Type', 'application/json');
 
     const rateLimitHeaderNames = [
@@ -338,7 +343,7 @@ export class RateLimiter {
     return responseHeaders;
   }
 
-  private async handleImgchestPost(request: Request): Promise<Response> {
+  private async handleImgchestPost(request: Request, corsHeaders: Record<string, string>): Promise<Response> {
     const authHeader = request.headers.get('Authorization');
     const token = authHeader?.replace('Bearer ', '') ||
                   (request as unknown as { env?: { IMGCHEST_API_TOKEN?: string } }).env?.IMGCHEST_API_TOKEN;
@@ -351,7 +356,7 @@ export class RateLimiter {
           authHeaderValue: authHeader ? authHeader.substring(0, 20) + '...' : null,
         }
       }), {
-        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 401,
       });
     }
@@ -359,19 +364,33 @@ export class RateLimiter {
     const formData = await request.formData();
     const images = formData.getAll('images[]') as File[];
 
-    if (images.length === 0) {
-      return new Response(JSON.stringify({ error: 'No images provided' }), {
-        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+    const validation = validateImgchestFiles(images);
+    if (!validation.ok) {
+      return new Response(JSON.stringify({ error: validation.error }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 400,
       });
     }
 
+    const privacy = (formData.get('privacy') || 'hidden').toString();
+    if (!['public', 'hidden', 'secret'].includes(privacy)) {
+      return new Response(JSON.stringify({ error: 'Invalid privacy value. Must be public, hidden, or secret.' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 400,
+      });
+    }
+
+    const nsfwRaw = (formData.get('nsfw') ?? 'true').toString().toLowerCase();
+    const nsfw = nsfwRaw === 'true' || nsfwRaw === '1';
+
     const otherEntries: [string, FormDataEntryValue][] = [];
     for (const [key, value] of formData.entries()) {
-      if (key !== 'images[]') {
+      if (key !== 'images[]' && key !== 'privacy' && key !== 'nsfw') {
         otherEntries.push([key, value]);
       }
     }
+    otherEntries.push(['privacy', privacy]);
+    otherEntries.push(['nsfw', nsfw ? 'true' : 'false']);
 
     const MAX_IMAGES_PER_REQUEST = 20;
     const chunks: File[][] = [];
@@ -438,7 +457,7 @@ export class RateLimiter {
             details: result,
             chunk: i + 1,
           }), {
-            headers: this.createResponseHeaders(response.headers),
+            headers: this.createResponseHeaders(response.headers, corsHeaders),
             status: response.status,
           });
         }
@@ -452,19 +471,19 @@ export class RateLimiter {
           error: message,
           chunk: i + 1,
         }), {
-          headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           status: 500,
         });
       }
     }
 
     return new Response(JSON.stringify(finalResult), {
-      headers: this.createResponseHeaders(lastResponseHeaders || new Headers()),
+      headers: this.createResponseHeaders(lastResponseHeaders || new Headers(), corsHeaders),
       status: 200,
     });
   }
 
-  private async handleImgchestAdd(request: Request): Promise<Response> {
+  private async handleImgchestAdd(request: Request, corsHeaders: Record<string, string>): Promise<Response> {
     const url = new URL(request.url);
     const pathParts = url.pathname.split('/');
     const postId = pathParts[4];
@@ -475,7 +494,7 @@ export class RateLimiter {
 
     if (!token) {
       return new Response(JSON.stringify({ error: 'Imgchest API token not configured' }), {
-        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 401,
       });
     }
@@ -483,9 +502,10 @@ export class RateLimiter {
     const formData = await request.formData();
     const images = formData.getAll('images[]') as File[];
 
-    if (images.length === 0) {
-      return new Response(JSON.stringify({ error: 'No images provided' }), {
-        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+    const validation = validateImgchestFiles(images);
+    if (!validation.ok) {
+      return new Response(JSON.stringify({ error: validation.error }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 400,
       });
     }
@@ -544,7 +564,7 @@ export class RateLimiter {
             details: result,
             chunk: i + 1,
           }), {
-            headers: this.createResponseHeaders(response.headers),
+            headers: this.createResponseHeaders(response.headers, corsHeaders),
             status: response.status,
           });
         }
@@ -558,19 +578,19 @@ export class RateLimiter {
           error: message,
           chunk: i + 1,
         }), {
-          headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           status: 500,
         });
       }
     }
 
     return new Response(JSON.stringify(finalResult), {
-      headers: this.createResponseHeaders(lastResponseHeaders || new Headers()),
+      headers: this.createResponseHeaders(lastResponseHeaders || new Headers(), corsHeaders),
       status: 200,
     });
   }
 
-  private async handleSxcuCollections(request: Request): Promise<Response> {
+  private async handleSxcuCollections(request: Request, corsHeaders: Record<string, string>): Promise<Response> {
     const formData = await request.formData();
     let knownBucket: string | null = null;
 
@@ -596,21 +616,33 @@ export class RateLimiter {
       );
 
       return new Response(JSON.stringify(result), {
-        headers: this.createResponseHeaders(response.headers),
+        headers: this.createResponseHeaders(response.headers, corsHeaders),
         status: response.ok ? 200 : response.status,
       });
 
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       return new Response(JSON.stringify({ error: message }), {
-        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 500,
       });
     }
   }
 
-  private async handleSxcuFiles(request: Request): Promise<Response> {
+  private async handleSxcuFiles(request: Request, corsHeaders: Record<string, string>): Promise<Response> {
     const formData = await request.formData();
+    const files = formData.getAll('file') as File[];
+
+    if (files.length > 0) {
+      const validation = validateFiles(files);
+      if (!validation.ok) {
+        return new Response(JSON.stringify({ error: validation.error }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 400,
+        });
+      }
+    }
+
     let knownBucket: string | null = null;
 
     try {
@@ -643,14 +675,14 @@ export class RateLimiter {
       );
 
       return new Response(JSON.stringify(result), {
-        headers: this.createResponseHeaders(response.headers),
+        headers: this.createResponseHeaders(response.headers, corsHeaders),
         status: response.ok ? 200 : response.status,
       });
 
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       return new Response(JSON.stringify({ error: message }), {
-        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 500,
       });
     }

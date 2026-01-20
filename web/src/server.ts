@@ -1,5 +1,6 @@
 import { serve } from 'bun';
 import { writeFileSync, unlinkSync, mkdirSync, existsSync, readFileSync } from 'fs';
+import { resolve, normalize, extname, sep } from 'path';
 import {
   RateLimitEntry,
   AllRateLimits,
@@ -22,6 +23,40 @@ const TEMP_DIR = 'C:\\Users\\lenovo\\AppData\\Local\\Temp';
 const RATE_LIMIT_FILE = `${TEMP_DIR}\\image_uploader_rate_limits.json`;
 const SXCU_GLOBAL_BUCKET = '__sxcu_global__';
 const DEBUG = process.env.DEBUG === 'true';
+
+const PUBLIC_ROOT = resolve(process.cwd());
+const ALLOWED_STATIC_EXTS = new Set(['.html', '.css', '.js', '.map', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico']);
+
+const SECURITY_HEADERS: Record<string, string> = {
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'no-referrer',
+  'X-Frame-Options': 'DENY',
+  'Content-Security-Policy': "default-src 'self'; img-src 'self' data: https:; connect-src 'self' https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self'; base-uri 'self'; frame-ancestors 'none'",
+};
+
+function safeStaticPath(urlPath: string): string | null {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(urlPath);
+  } catch {
+    return null;
+  }
+
+  decoded = decoded.replaceAll('\\', '/');
+
+  const requested = decoded === '/' ? '/index.html' : decoded;
+
+  if (requested.includes('\0')) return null;
+
+  const resolved = resolve(PUBLIC_ROOT, '.' + requested);
+
+  if (!resolved.startsWith(PUBLIC_ROOT + sep)) return null;
+
+  const ext = extname(resolved).toLowerCase();
+  if (!ALLOWED_STATIC_EXTS.has(ext)) return null;
+
+  return resolved;
+}
 
 let rateLimits: AllRateLimits = {
   imgchest: { default: null },
@@ -748,17 +783,26 @@ if (import.meta.main) {
         return handleImgchestAdd(req);
       }
 
-      const filePath = path === '/' ? './index.html' : '.' + path;
-      if (existsSync(filePath)) {
-        const file = Bun.file(filePath);
-        const ext = filePath.split('.').pop() || '';
+      const staticPath = safeStaticPath(path);
+      if (staticPath && existsSync(staticPath)) {
+        const file = Bun.file(staticPath);
+        const ext = extname(staticPath).slice(1).toLowerCase();
         const contentTypes: Record<string, string> = {
           html: 'text/html',
           css: 'text/css',
           js: 'application/javascript',
+          png: 'image/png',
+          jpg: 'image/jpeg',
+          jpeg: 'image/jpeg',
+          gif: 'image/gif',
+          webp: 'image/webp',
+          ico: 'image/x-icon',
         };
         return new Response(file, {
-          headers: { 'Content-Type': contentTypes[ext] || 'text/plain' },
+          headers: {
+            'Content-Type': contentTypes[ext] || 'text/plain',
+            ...SECURITY_HEADERS,
+          },
         });
       }
       return new Response('Not Found', { status: 404 });

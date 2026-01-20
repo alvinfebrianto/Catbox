@@ -1,23 +1,50 @@
 import { RateLimiter } from './rate-limiter';
-import { CORS_HEADERS, DEFAULT_RETRY_CONFIG, calculateExponentialBackoff } from './types';
+import {
+  CORS_HEADERS,
+  DEFAULT_RETRY_CONFIG,
+  calculateExponentialBackoff,
+  getCorsHeaders,
+  validateFiles,
+  MAX_TOTAL_SIZE,
+} from './types';
 
 interface Env {
   IMGCHEST_API_TOKEN?: string;
   RATE_LIMITER?: DurableObjectNamespace;
+  PROXY_AUTH_TOKEN?: string;
 }
 
 const DEBUG = false;
+const MAX_REQUEST_BYTES = MAX_TOTAL_SIZE;
 
-async function handleCatboxUpload(req: Request): Promise<Response> {
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let r = 0;
+  for (let i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return r === 0;
+}
+
+async function handleCatboxUpload(req: Request, corsHeaders: Record<string, string>): Promise<Response> {
   const formData = await req.formData();
   const reqtype = formData.get('reqtype') as string;
 
-  const validReqTypes = ['fileupload', 'urlupload', 'createalbum'];
+  const validReqTypes = ['fileupload'];
   if (!validReqTypes.includes(reqtype)) {
     return new Response(JSON.stringify({ error: 'Unknown request type' }), {
-      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 400,
     });
+  }
+
+  const files = formData.getAll('fileToUpload') as File[];
+  if (files.length > 0) {
+    const validation = validateFiles(files);
+    if (!validation.ok) {
+      return new Response(JSON.stringify({ error: validation.error }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 400,
+      });
+    }
   }
 
   let lastError: Error | null = null;
@@ -37,7 +64,7 @@ async function handleCatboxUpload(req: Request): Promise<Response> {
       if (response.ok) {
         return new Response(text, {
           status: 200,
-          headers: CORS_HEADERS,
+          headers: corsHeaders,
         });
       }
 
@@ -54,7 +81,7 @@ async function handleCatboxUpload(req: Request): Promise<Response> {
 
       return new Response(text, {
         status: response.status,
-        headers: CORS_HEADERS,
+        headers: corsHeaders,
       });
 
     } catch (error) {
@@ -73,7 +100,7 @@ async function handleCatboxUpload(req: Request): Promise<Response> {
 
   return new Response(JSON.stringify({ error: lastError?.message || 'Unknown error' }), {
     status: 500,
-    headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });
 }
 
@@ -84,29 +111,59 @@ export default {
     const url = new URL(request.url);
     const method = request.method;
     const path = url.pathname;
+    const origin = request.headers.get('Origin');
+    const corsHeaders = getCorsHeaders(origin);
 
     if (method === 'OPTIONS') {
-      return new Response(null, { headers: CORS_HEADERS, status: 204 });
+      return new Response(null, { headers: corsHeaders, status: 204 });
+    }
+
+    if (method === 'POST') {
+      const contentLength = request.headers.get('content-length');
+      if (contentLength && parseInt(contentLength, 10) > MAX_REQUEST_BYTES) {
+        return new Response(JSON.stringify({ error: 'Request too large' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 413,
+        });
+      }
+
+      const token = env.PROXY_AUTH_TOKEN;
+      if (!token) {
+        return new Response(JSON.stringify({ error: 'Server misconfigured' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 500,
+        });
+      }
+
+      const presented = request.headers.get('X-Proxy-Auth') || '';
+      if (!timingSafeEqual(presented, token)) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 401,
+        });
+      }
     }
 
     if (method === 'POST' && path === '/upload/catbox') {
-      return handleCatboxUpload(request);
+      return handleCatboxUpload(request, corsHeaders);
     }
 
     if (!env.RATE_LIMITER) {
       return new Response(JSON.stringify({ error: 'Rate limiter not configured' }), {
-        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 500,
       });
     }
 
-    const rateLimiterId = env.RATE_LIMITER.idFromName('global');
+    const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
+    const rateLimiterId = env.RATE_LIMITER.idFromName(`client-${clientIP}`);
     const rateLimiter = env.RATE_LIMITER.get(rateLimiterId);
 
     const headers = new Headers(request.headers);
     if (env.IMGCHEST_API_TOKEN && !headers.has('Authorization')) {
       headers.set('Authorization', 'Bearer ' + env.IMGCHEST_API_TOKEN);
     }
+    headers.set('X-Origin', origin || '');
 
     const rateLimiterRequest = new Request(request.url, {
       method: request.method,

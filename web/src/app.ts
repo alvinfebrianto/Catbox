@@ -1,4 +1,4 @@
-import { Provider, UploadResult, ALLOWED_EXTENSIONS } from './types';
+import { Provider, UploadResult, ALLOWED_EXTENSIONS, IMGCHEST_ALLOWED_EXTENSIONS, IMGCHEST_MAX_FILE_SIZE, validateImgchestFiles } from './types';
 
 declare const API_BASE_URL: string;
 
@@ -13,6 +13,25 @@ interface RateLimitState {
   remaining: number;
   reset: number;
   bucket: string | null;
+}
+
+function createSafeLink(url: string): HTMLAnchorElement {
+  const a = document.createElement('a');
+  a.rel = 'noopener noreferrer';
+  a.target = '_blank';
+  a.textContent = url;
+
+  try {
+    const u = new URL(url);
+    if (u.protocol === 'http:' || u.protocol === 'https:') {
+      a.href = u.toString();
+    } else {
+      a.href = 'about:blank';
+    }
+  } catch {
+    a.href = 'about:blank';
+  }
+  return a;
 }
 
 class ImageUploader {
@@ -44,9 +63,21 @@ class ImageUploader {
   private imgchestApiKeyGroup!: HTMLElement;
   private imgchestApiKeyInput!: HTMLInputElement;
   private toggleApiKeyBtn!: HTMLButtonElement;
+  private descriptionGroup!: HTMLElement;
+  private imgchestOptions!: HTMLElement;
+  private imgchestPrivacySelect!: HTMLSelectElement;
+  private imgchestNsfwCheckbox!: HTMLInputElement;
 
   constructor() {
-    this.provider = (localStorage.getItem('image_uploader_provider') as Provider) || 'imgchest';
+    this.provider = (sessionStorage.getItem('image_uploader_provider') as Provider)
+      || (localStorage.getItem('image_uploader_provider') as Provider)
+      || 'imgchest';
+
+    if (localStorage.getItem('image_uploader_provider')) {
+      sessionStorage.setItem('image_uploader_provider', localStorage.getItem('image_uploader_provider')!);
+      localStorage.removeItem('image_uploader_provider');
+    }
+
     this.apiBaseUrl = typeof API_BASE_URL !== 'undefined' ? API_BASE_URL : '';
     this.init();
   }
@@ -75,10 +106,19 @@ class ImageUploader {
     this.imgchestApiKeyGroup = document.getElementById('imgchestApiKeyGroup') as HTMLElement;
     this.imgchestApiKeyInput = document.getElementById('imgchestApiKey') as HTMLInputElement;
     this.toggleApiKeyBtn = document.getElementById('toggleApiKeyVisibility') as HTMLButtonElement;
+    this.descriptionGroup = document.getElementById('descriptionGroup') as HTMLElement;
+    this.imgchestOptions = document.getElementById('imgchestOptions') as HTMLElement;
+    this.imgchestPrivacySelect = document.getElementById('imgchestPrivacy') as HTMLSelectElement;
+    this.imgchestNsfwCheckbox = document.getElementById('imgchestNsfw') as HTMLInputElement;
 
     this.providerSelect.value = this.provider;
 
-    const savedApiKey = localStorage.getItem('imgchest_api_key');
+    let savedApiKey = sessionStorage.getItem('imgchest_api_key');
+    if (!savedApiKey && localStorage.getItem('imgchest_api_key')) {
+      savedApiKey = localStorage.getItem('imgchest_api_key');
+      sessionStorage.setItem('imgchest_api_key', savedApiKey!);
+      localStorage.removeItem('imgchest_api_key');
+    }
     if (savedApiKey && this.imgchestApiKeyInput) {
       this.imgchestApiKeyInput.value = savedApiKey;
     }
@@ -92,7 +132,7 @@ class ImageUploader {
 
     this.providerSelect.addEventListener('change', () => {
       this.provider = this.providerSelect.value as Provider;
-      localStorage.setItem('image_uploader_provider', this.provider);
+      sessionStorage.setItem('image_uploader_provider', this.provider);
       this.updateUI();
     });
 
@@ -101,6 +141,7 @@ class ImageUploader {
       anonymousCheckbox.addEventListener('change', () => {
         this.updateAnonymousWarning();
         this.updatePostIdVisibility();
+        this.updatePrivacySelectState();
       });
     }
 
@@ -117,9 +158,9 @@ class ImageUploader {
       this.imgchestApiKeyInput.addEventListener('change', () => {
         const value = this.imgchestApiKeyInput.value.trim();
         if (value) {
-          localStorage.setItem('imgchest_api_key', value);
+          sessionStorage.setItem('imgchest_api_key', value);
         } else {
-          localStorage.removeItem('imgchest_api_key');
+          sessionStorage.removeItem('imgchest_api_key');
         }
       });
     }
@@ -150,10 +191,11 @@ class ImageUploader {
       const input = e.target as HTMLInputElement;
       const fileList = input.files;
       if (fileList && fileList.length > 0) {
+        const allowedExtensions = this.provider === 'imgchest' ? IMGCHEST_ALLOWED_EXTENSIONS : ALLOWED_EXTENSIONS;
         for (let i = 0; i < fileList.length; i++) {
           const file = fileList[i];
           const ext = '.' + file.name.split('.').pop()?.toLowerCase();
-          if (ALLOWED_EXTENSIONS.includes(ext)) {
+          if (allowedExtensions.includes(ext)) {
             const exists = this.files.some(f => f.name === file.name && f.size === file.size);
             if (!exists) {
               this.files.push(file);
@@ -231,6 +273,24 @@ class ImageUploader {
     }
   }
 
+  private updatePrivacySelectState(): void {
+    if (!this.imgchestPrivacySelect) return;
+
+    const anonymousCheckbox = document.getElementById('anonymous') as HTMLInputElement;
+    const isImgchest = this.provider === 'imgchest';
+    const isAnonymous = anonymousCheckbox?.checked ?? false;
+
+    if (!isImgchest) {
+      this.imgchestPrivacySelect.disabled = false;
+      return;
+    }
+
+    this.imgchestPrivacySelect.disabled = isAnonymous;
+    if (isAnonymous) {
+      this.imgchestPrivacySelect.value = 'hidden';
+    }
+  }
+
   private updateUI(): void {
     const isSxcu = this.provider === 'sxcu';
     const isImgchest = this.provider === 'imgchest';
@@ -248,15 +308,26 @@ class ImageUploader {
     if (this.imgchestApiKeyGroup) {
       this.imgchestApiKeyGroup.classList.toggle('hidden', !isImgchest);
     }
+    if (this.imgchestOptions) {
+      this.imgchestOptions.classList.toggle('hidden', !isImgchest);
+    }
+    if (this.descriptionGroup) {
+      this.descriptionGroup.classList.toggle('hidden', isImgchest);
+    }
     this.updatePostIdVisibility();
     this.updateAnonymousWarning();
+    this.updatePrivacySelectState();
 
     const createAlbumGroup = document.getElementById('createAlbumGroup');
     if (createAlbumGroup) {
       createAlbumGroup.classList.toggle('hidden', !isCatbox);
     }
 
-    this.filesInput.setAttribute('accept', ALLOWED_EXTENSIONS.join(','));
+    if (isImgchest) {
+      this.filesInput.setAttribute('accept', IMGCHEST_ALLOWED_EXTENSIONS.join(','));
+    } else {
+      this.filesInput.setAttribute('accept', ALLOWED_EXTENSIONS.join(','));
+    }
 
     if (this.fileTypesHint) {
       if (isCatbox) {
@@ -264,16 +335,17 @@ class ImageUploader {
       } else if (isSxcu) {
         this.fileTypesHint.textContent = 'Allowed: PNG, GIF, JPEG, ICO, BMP, TIFF, WEBM, WEBP';
       } else {
-        this.fileTypesHint.textContent = 'Allowed: JPG, JPEG, PNG, GIF, WEBP';
+        this.fileTypesHint.textContent = 'Allowed: JPG, JPEG, PNG, GIF, WEBP, MP4 (max 30MB)';
       }
     }
   }
 
   private addFiles(fileList: FileList): void {
+    const allowedExtensions = this.provider === 'imgchest' ? IMGCHEST_ALLOWED_EXTENSIONS : ALLOWED_EXTENSIONS;
     for (let i = 0; i < fileList.length; i++) {
       const file = fileList[i];
       const ext = '.' + file.name.split('.').pop()?.toLowerCase();
-      if (ALLOWED_EXTENSIONS.includes(ext)) {
+      if (allowedExtensions.includes(ext)) {
         const exists = this.files.some(f => f.name === file.name && f.size === file.size);
         if (!exists) {
           this.files.push(file);
@@ -308,10 +380,21 @@ class ImageUploader {
       const file = this.files[i];
       const item = document.createElement('div');
       item.className = 'file-item';
-      item.innerHTML = `<span class="file-name">${file.name} (${this.formatSize(file.size)})</span><button type="button" class="remove-btn" data-index="${i}">&times;</button>`;
-      const removeBtn = item.querySelector('.remove-btn') as HTMLButtonElement;
+
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'file-name';
+      nameSpan.textContent = file.name + ' (' + this.formatSize(file.size) + ')';
+
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'remove-btn';
+      removeBtn.setAttribute('data-index', String(i));
+      removeBtn.textContent = '×';
       const idx = i;
       removeBtn.onclick = () => this.removeFile(idx);
+
+      item.appendChild(nameSpan);
+      item.appendChild(removeBtn);
       this.fileList.appendChild(item);
     }
   }
@@ -731,6 +814,14 @@ class ImageUploader {
       return;
     }
 
+    const validation = validateImgchestFiles(this.files);
+    if (!validation.ok) {
+      this.showError(validation.error || 'Invalid files');
+      this.setLoading(false);
+      this.progressDiv.style.display = 'none';
+      return;
+    }
+
     const totalFiles = this.files.length;
     let filesToUpload = this.files.slice();
 
@@ -749,13 +840,15 @@ class ImageUploader {
 
   private uploadImgchestBatch(postId: string, files: File[], results: UploadResult[], totalFiles: number, anonymous: boolean): void {
     const title = this.titleInput.value;
+    const privacy = this.imgchestPrivacySelect?.value || 'hidden';
+    const nsfw = this.imgchestNsfwCheckbox?.checked ?? true;
 
     this.updateProgress(0, postId ? 'Adding images...' : 'Creating post...');
 
     const formData = new FormData();
     if (title) formData.append('title', title);
-    formData.append('privacy', 'hidden');
-    formData.append('nsfw', 'true');
+    formData.append('privacy', privacy);
+    formData.append('nsfw', nsfw ? 'true' : 'false');
     if (anonymous) formData.append('anonymous', '1');
 
     for (const file of files) {
@@ -898,6 +991,8 @@ class ImageUploader {
   private uploadImgchestProgressive(files: File[], results: UploadResult[], totalFiles: number, title: string): void {
     let currentPostId: string | null = null;
     let completedFiles = 0;
+    const privacy = this.imgchestPrivacySelect?.value || 'hidden';
+    const nsfw = this.imgchestNsfwCheckbox?.checked ?? true;
 
     const uploadNextFile = (index: number): void => {
       if (index >= files.length) {
@@ -915,8 +1010,8 @@ class ImageUploader {
 
       if (isFirst) {
         if (title) formData.append('title', title);
-        formData.append('privacy', 'hidden');
-        formData.append('nsfw', 'true');
+        formData.append('privacy', privacy);
+        formData.append('nsfw', nsfw ? 'true' : 'false');
       }
 
       const url = isFirst
@@ -1016,13 +1111,16 @@ class ImageUploader {
 
     if (result.type === 'success') {
       if (result.isAlbum) {
-        item.innerHTML = 'Album: <a href="' + result.url + '" target="_blank">' + result.url + '</a>';
+        item.textContent = 'Album: ';
+        item.appendChild(createSafeLink(result.url || ''));
       } else if (result.isCollection) {
-        item.innerHTML = 'Collection: <a href="' + result.url + '" target="_blank">' + result.url + '</a>';
+        item.textContent = 'Collection: ';
+        item.appendChild(createSafeLink(result.url || ''));
       } else if (result.isPost) {
-        item.innerHTML = 'Post: <a href="' + result.url + '" target="_blank">' + result.url + '</a>';
+        item.textContent = 'Post: ';
+        item.appendChild(createSafeLink(result.url || ''));
       } else {
-        item.innerHTML = '<a href="' + result.url + '" target="_blank">' + result.url + '</a>';
+        item.appendChild(createSafeLink(result.url || ''));
       }
     } else {
       item.textContent = result.message || '';
@@ -1119,13 +1217,16 @@ class ImageUploader {
 
         if (result.type === 'success') {
           if (result.isAlbum) {
-            item.innerHTML = 'Album: <a href="' + result.url + '" target="_blank">' + result.url + '</a>';
+            item.textContent = 'Album: ';
+            item.appendChild(createSafeLink(result.url || ''));
           } else if (result.isCollection) {
-            item.innerHTML = 'Collection: <a href="' + result.url + '" target="_blank">' + result.url + '</a>';
+            item.textContent = 'Collection: ';
+            item.appendChild(createSafeLink(result.url || ''));
           } else if (result.isPost) {
-            item.innerHTML = 'Post: <a href="' + result.url + '" target="_blank">' + result.url + '</a>';
+            item.textContent = 'Post: ';
+            item.appendChild(createSafeLink(result.url || ''));
           } else {
-            item.innerHTML = '<a href="' + result.url + '" target="_blank">' + result.url + '</a>';
+            item.appendChild(createSafeLink(result.url || ''));
           }
         } else if (result.type === 'warning') {
           item.textContent = result.message || '';
@@ -1155,7 +1256,11 @@ class ImageUploader {
 
   private showError(message: string): void {
     this.resultsDiv.style.display = 'block';
-    this.resultsContent.innerHTML = '<div class="result-item error">' + message + '</div>';
+    this.resultsContent.innerHTML = '';
+    const errorDiv = document.createElement('div');
+    errorDiv.className = 'result-item error';
+    errorDiv.textContent = message;
+    this.resultsContent.appendChild(errorDiv);
   }
 }
 

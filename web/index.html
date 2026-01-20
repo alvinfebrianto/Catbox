@@ -49,7 +49,7 @@
                 <input type="text" id="title" name="title" placeholder="Optional title">
             </div>
 
-            <div class="form-group">
+            <div class="form-group" id="descriptionGroup">
                 <label for="description">Description</label>
                 <input type="text" id="description" name="description" placeholder="Optional description">
             </div>
@@ -78,6 +78,25 @@
                     <span class="checkmark"></span>
                     Anonymous
                 </label>
+            </div>
+
+            <div id="imgchestOptions" class="hidden">
+                <div class="form-group">
+                    <label for="imgchestPrivacy">Privacy</label>
+                    <select id="imgchestPrivacy" name="imgchestPrivacy">
+                        <option value="public">Public</option>
+                        <option value="hidden" selected>Hidden</option>
+                        <option value="secret">Secret</option>
+                    </select>
+                </div>
+
+                <div class="form-group checkbox-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="imgchestNsfw" name="imgchestNsfw" checked>
+                        <span class="checkmark"></span>
+                        NSFW
+                    </label>
+                </div>
             </div>
 
             <div class="form-group hidden" id="imgchestApiKeyGroup">
