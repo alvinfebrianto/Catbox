@@ -1,6 +1,5 @@
 import { RateLimiter } from './rate-limiter';
 import {
-  CORS_HEADERS,
   DEFAULT_RETRY_CONFIG,
   calculateExponentialBackoff,
   getCorsHeaders,
@@ -11,18 +10,10 @@ import {
 interface Env {
   IMGCHEST_API_TOKEN?: string;
   RATE_LIMITER?: DurableObjectNamespace;
-  PROXY_AUTH_TOKEN?: string;
 }
 
 const DEBUG = false;
 const MAX_REQUEST_BYTES = MAX_TOTAL_SIZE;
-
-function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let r = 0;
-  for (let i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return r === 0;
-}
 
 async function handleCatboxUpload(req: Request, corsHeaders: Record<string, string>): Promise<Response> {
   const formData = await req.formData();
@@ -124,22 +115,6 @@ export default {
         return new Response(JSON.stringify({ error: 'Request too large' }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           status: 413,
-        });
-      }
-
-      const token = env.PROXY_AUTH_TOKEN;
-      if (!token) {
-        return new Response(JSON.stringify({ error: 'Server misconfigured' }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          status: 500,
-        });
-      }
-
-      const presented = request.headers.get('X-Proxy-Auth') || '';
-      if (!timingSafeEqual(presented, token)) {
-        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          status: 401,
         });
       }
     }

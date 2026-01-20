@@ -82,6 +82,10 @@ class ImageUploader {
     this.init();
   }
 
+  private getAuthHeaders(): Record<string, string> {
+    return {};
+  }
+
   private init(): void {
     this.form = document.getElementById('uploadForm') as HTMLFormElement;
     this.providerSelect = document.getElementById('provider') as unknown as HTMLSelectElement;
@@ -457,7 +461,7 @@ class ImageUploader {
       formData.append('reqtype', 'fileupload');
       formData.append('fileToUpload', file);
 
-      fetch(this.apiBaseUrl + '/upload/catbox', { method: 'POST', body: formData })
+      fetch(this.apiBaseUrl + '/upload/catbox', { method: 'POST', body: formData, headers: this.getAuthHeaders() })
         .then(response => {
           if (!response.ok) throw new Error('Upload failed: ' + response.statusText);
           return response.text();
@@ -485,7 +489,7 @@ class ImageUploader {
       formData.append('reqtype', 'urlupload');
       formData.append('url', url);
 
-      fetch(this.apiBaseUrl + '/upload/catbox', { method: 'POST', body: formData })
+      fetch(this.apiBaseUrl + '/upload/catbox', { method: 'POST', body: formData, headers: this.getAuthHeaders() })
         .then(response => {
           if (!response.ok) throw new Error('URL upload failed: ' + response.statusText);
           return response.text();
@@ -527,7 +531,7 @@ class ImageUploader {
         albumFormData.append('desc', description);
         albumFormData.append('files', fileNames.join(' '));
 
-        fetch(this.apiBaseUrl + '/upload/catbox', { method: 'POST', body: albumFormData })
+        fetch(this.apiBaseUrl + '/upload/catbox', { method: 'POST', body: albumFormData, headers: this.getAuthHeaders() })
           .then(response => {
             if (response.ok) return response.text();
             throw new Error('Album creation failed');
@@ -622,7 +626,7 @@ class ImageUploader {
       fetch(this.apiBaseUrl + '/upload/sxcu/files', {
         method: 'POST',
         body: formData,
-        headers: { 'User-Agent': 'sxcuUploader/1.0' }
+        headers: { ...this.getAuthHeaders(), 'User-Agent': 'sxcuUploader/1.0' }
       })
         .then(response => {
           const newRateLimit = parseRateLimitHeaders(response.headers);
@@ -771,7 +775,7 @@ class ImageUploader {
       fetch(this.apiBaseUrl + '/upload/sxcu/collections', {
         method: 'POST',
         body: formData,
-        headers: { 'User-Agent': 'sxcuUploader/1.0' }
+        headers: { ...this.getAuthHeaders(), 'User-Agent': 'sxcuUploader/1.0' }
       })
         .then(response => {
           if (!response.ok) throw new Error('Collection creation failed: ' + response.statusText);
@@ -859,11 +863,11 @@ class ImageUploader {
       ? this.apiBaseUrl + '/upload/imgchest/post/' + postId + '/add'
       : this.apiBaseUrl + '/upload/imgchest/post';
 
-    const fetchOptions: RequestInit = { method: 'POST', body: formData };
+    const fetchOptions: RequestInit = { method: 'POST', body: formData, headers: { ...this.getAuthHeaders() } };
 
     const customToken = this.imgchestApiKeyInput?.value.trim();
     if (customToken) {
-      fetchOptions.headers = { 'Authorization': 'Bearer ' + customToken };
+      (fetchOptions.headers as Record<string, string>)['Authorization'] = 'Bearer ' + customToken;
     }
 
     fetch(url, fetchOptions)
@@ -931,11 +935,11 @@ class ImageUploader {
 
       const url = this.apiBaseUrl + '/upload/imgchest/post/' + postId + '/add';
 
-      const fetchOptions: RequestInit = { method: 'POST', body: formData };
+      const fetchOptions: RequestInit = { method: 'POST', body: formData, headers: { ...this.getAuthHeaders() } };
 
       const customToken = this.imgchestApiKeyInput?.value.trim();
       if (customToken) {
-        fetchOptions.headers = { 'Authorization': 'Bearer ' + customToken };
+        (fetchOptions.headers as Record<string, string>)['Authorization'] = 'Bearer ' + customToken;
       }
 
       fetch(url, fetchOptions)
@@ -1018,11 +1022,11 @@ class ImageUploader {
         ? this.apiBaseUrl + '/upload/imgchest/post'
         : this.apiBaseUrl + '/upload/imgchest/post/' + currentPostId + '/add';
 
-      const fetchOptions: RequestInit = { method: 'POST', body: formData };
+      const fetchOptions: RequestInit = { method: 'POST', body: formData, headers: { ...this.getAuthHeaders() } };
 
       const customToken = this.imgchestApiKeyInput?.value.trim();
       if (customToken) {
-        fetchOptions.headers = { 'Authorization': 'Bearer ' + customToken };
+        (fetchOptions.headers as Record<string, string>)['Authorization'] = 'Bearer ' + customToken;
       }
 
       fetch(url, fetchOptions)

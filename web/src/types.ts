@@ -118,6 +118,7 @@ export interface WorkerEnv {
 const ALLOWED_ORIGINS = new Set([
   'https://image-uploader.alvinpelajar.workers.dev',
   'http://localhost:3000',
+  'https://alvinfebrianto.github.io',
 ]);
 
 export function getCorsHeaders(origin: string | null): Record<string, string> {
@@ -135,12 +136,7 @@ export function getCorsHeaders(origin: string | null): Record<string, string> {
   return headers;
 }
 
-export const CORS_HEADERS: Record<string, string> = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Proxy-Auth',
-  'Access-Control-Max-Age': '86400',
-};
+
 
 export const ALLOWED_EXTENSIONS = [
   '.png', '.gif', '.jpeg', '.jpg', '.ico', '.bmp',

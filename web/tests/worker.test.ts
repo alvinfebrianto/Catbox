@@ -1,6 +1,6 @@
 import { test, expect, describe, mock, afterEach } from 'bun:test';
 import workerDefault from '../src/worker';
-import { CORS_HEADERS } from '../src/types';
+import { getCorsHeaders } from '../src/types';
 
 const originalFetch = globalThis.fetch;
 const TEST_PROXY_TOKEN = 'test-proxy-auth-token';
@@ -46,7 +46,7 @@ function createMockResponse(body: string | object, options: { status?: number; h
 }
 
 function createMockDurableObjectNamespace(): DurableObjectNamespace {
-  const mockCORSHeaders = { ...CORS_HEADERS };
+  const mockCORSHeaders = getCorsHeaders(TEST_ORIGIN);
 
   const mockStub = {
     fetch: async (request: Request): Promise<Response> => {

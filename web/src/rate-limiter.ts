@@ -1,5 +1,4 @@
 import {
-  CORS_HEADERS,
   RateLimitEntry,
   AllRateLimits,
   RateLimitCheckResult,
