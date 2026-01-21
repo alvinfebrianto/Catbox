@@ -117,6 +117,15 @@ function getImgchestToken(): string | null {
   return process.env.IMGCHEST_API_TOKEN || null;
 }
 
+function getBearerToken(req: Request): string | null {
+  const raw = req.headers.get('Authorization');
+  if (!raw) return null;
+
+  const m = raw.match(/^Bearer\s+(.+)$/i);
+  const token = (m ? m[1] : raw).trim();
+  return token || null;
+}
+
 function checkImgchestRateLimit(cost: number = 1): RateLimitCheckResult {
   const now = Date.now();
   const entry = rateLimits.imgchest.default;
@@ -501,10 +510,10 @@ async function handleSxcuFiles(req: Request): Promise<Response> {
 }
 
 async function handleImgchestPost(req: Request): Promise<Response> {
-  const token = getImgchestToken();
+  const token = getBearerToken(req) ?? getImgchestToken();
   if (!token) {
     return new Response(JSON.stringify({
-      error: 'Imgchest API token not found. Set IMGCHEST_API_TOKEN environment variable in .env file'
+      error: 'Imgchest API token not found. Provide a custom API key in the UI or set IMGCHEST_API_TOKEN environment variable in .env file'
     }), {
       headers: { 'Content-Type': 'application/json' },
       status: 401,
@@ -628,9 +637,9 @@ async function handleImgchestAdd(req: Request): Promise<Response> {
   const pathParts = url.pathname.split('/');
   const postId = pathParts[4];
 
-  const token = getImgchestToken();
+  const token = getBearerToken(req) ?? getImgchestToken();
   if (!token) {
-    return new Response(JSON.stringify({ error: 'Imgchest API token not found' }), {
+    return new Response(JSON.stringify({ error: 'Imgchest API token not found. Provide a custom API key in the UI or set IMGCHEST_API_TOKEN environment variable.' }), {
       headers: { 'Content-Type': 'application/json' },
       status: 401,
     });

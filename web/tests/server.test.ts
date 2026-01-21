@@ -56,13 +56,15 @@ function createMockFormData(entries: [string, string | File][]): MockFormData {
 interface MockRequest {
   url: string;
   method: string;
+  headers: Headers;
   formData: () => Promise<MockFormData>;
 }
 
-function createMockRequest(url: string, options: { method?: string; formData?: MockFormData } = {}): MockRequest {
+function createMockRequest(url: string, options: { method?: string; formData?: MockFormData; headers?: Record<string, string> } = {}): MockRequest {
   return {
     url,
     method: options.method || 'POST',
+    headers: new Headers(options.headers || {}),
     formData: async () => options.formData || createMockFormData([]),
   };
 }
@@ -273,6 +275,50 @@ describe('Imgchest upload handlers', () => {
     const response = await handleImgchestPost(req as unknown as Request);
 
     expect(response.status).toBe(401);
+  });
+
+  test('uses custom token from Authorization header', async () => {
+    delete process.env.IMGCHEST_API_TOKEN;
+    let capturedAuthHeader = '';
+    setMockFetch(mock((url, options) => {
+      capturedAuthHeader = (options as RequestInit).headers?.['Authorization'] || '';
+      return Promise.resolve(createMockResponse({
+        data: { id: 'post123', link: 'https://imgchest.com/p/post123' }
+      }, { headers: { 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': '59' } }) as unknown as Response);
+    }));
+
+    const formData = createMockFormData([['images[]', createMockFile('test.png') as unknown as File]]);
+    const req = createMockRequest('http://localhost:3000/upload/imgchest/post', {
+      formData,
+      headers: { 'Authorization': 'Bearer custom-user-token' }
+    });
+
+    const response = await handleImgchestPost(req as unknown as Request);
+
+    expect(response.status).toBe(200);
+    expect(capturedAuthHeader).toBe('Bearer custom-user-token');
+  });
+
+  test('custom token takes precedence over env token', async () => {
+    process.env.IMGCHEST_API_TOKEN = 'env-token';
+    let capturedAuthHeader = '';
+    setMockFetch(mock((url, options) => {
+      capturedAuthHeader = (options as RequestInit).headers?.['Authorization'] || '';
+      return Promise.resolve(createMockResponse({
+        data: { id: 'post123', link: 'https://imgchest.com/p/post123' }
+      }, { headers: { 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': '59' } }) as unknown as Response);
+    }));
+
+    const formData = createMockFormData([['images[]', createMockFile('test.png') as unknown as File]]);
+    const req = createMockRequest('http://localhost:3000/upload/imgchest/post', {
+      formData,
+      headers: { 'Authorization': 'Bearer custom-user-token' }
+    });
+
+    const response = await handleImgchestPost(req as unknown as Request);
+
+    expect(response.status).toBe(200);
+    expect(capturedAuthHeader).toBe('Bearer custom-user-token');
   });
 
   test('creates post with images', async () => {
