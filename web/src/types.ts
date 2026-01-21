@@ -201,10 +201,6 @@ export function validateImgchestFiles(files: File[]): FileValidationResult {
     return { ok: false, error: 'No files provided' };
   }
 
-  if (files.length > MAX_FILE_COUNT) {
-    return { ok: false, error: `Too many files (max ${MAX_FILE_COUNT})` };
-  }
-
   for (const f of files) {
     if (f.size <= 0) {
       return { ok: false, error: 'Empty file' };

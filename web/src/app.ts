@@ -919,6 +919,8 @@ class ImageUploader {
   private uploadImgchestProgressiveAddToPost(postId: string, files: File[], results: UploadResult[], totalFiles: number): void {
     let completedFiles = 0;
     let postResultAdded = false;
+    const privacy = this.imgchestPrivacySelect?.value || 'hidden';
+    const nsfw = this.imgchestNsfwCheckbox?.checked ?? true;
 
     const uploadNextFile = (index: number): void => {
       if (index >= files.length) {
@@ -928,10 +930,15 @@ class ImageUploader {
       }
 
       const file = files[index];
+      const isLastFile = index === files.length - 1;
       this.updateProgress((index / files.length) * 100, 'Adding ' + file.name + ' to post...');
 
       const formData = new FormData();
       formData.append('images[]', file);
+      if (isLastFile) {
+        formData.append('privacy', privacy);
+        formData.append('nsfw', nsfw ? 'true' : 'false');
+      }
 
       const url = this.apiBaseUrl + '/upload/imgchest/post/' + postId + '/add';
 

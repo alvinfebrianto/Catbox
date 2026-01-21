@@ -647,6 +647,17 @@ async function handleImgchestAdd(req: Request): Promise<Response> {
 
   const formData = await req.formData();
   const images = formData.getAll('images[]') as File[];
+  const privacyRaw = formData.get('privacy') as string | null;
+  const nsfwRaw = formData.get('nsfw') as string | null;
+  const privacy = privacyRaw && privacyRaw.trim() !== '' ? privacyRaw.trim() : null;
+  const nsfw = nsfwRaw && nsfwRaw.trim() !== '' ? nsfwRaw.trim() : null;
+
+  if (privacy !== null && !['public', 'hidden', 'secret'].includes(privacy)) {
+    return new Response(JSON.stringify({ error: 'Invalid privacy value. Must be public, hidden, or secret.' }), {
+      headers: { 'Content-Type': 'application/json' },
+      status: 400,
+    });
+  }
 
   if (images.length === 0) {
     return new Response(JSON.stringify({ error: 'No images provided' }), {
@@ -721,6 +732,73 @@ async function handleImgchestAdd(req: Request): Promise<Response> {
       return new Response(JSON.stringify({
         error: message,
         chunk: i + 1,
+      }), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 500,
+      });
+    }
+  }
+
+  if (privacy !== null || nsfw !== null) {
+    try {
+      const { response: updateResponse, result: updateResult } = await executeWithRateLimitRetry(
+        'imgchest',
+        null,
+        async () => {
+          const payload: Record<string, string> = {};
+          if (privacy !== null) payload.privacy = privacy;
+          if (nsfw !== null) payload.nsfw = nsfw;
+
+          const resp = await fetch(`https://api.imgchest.com/v1/post/${postId}`, {
+            method: 'PATCH',
+            body: JSON.stringify(payload),
+            headers: {
+              'Authorization': 'Bearer ' + token,
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+          });
+
+          const headers = parseRateLimitHeaders(resp.headers);
+          updateImgchestRateLimit(headers);
+
+          const text = await resp.text();
+
+          if (text.trim().startsWith('<')) {
+            throw new Error('Unauthorized or API error - received HTML response');
+          }
+
+          let json: Record<string, unknown>;
+          try {
+            json = JSON.parse(text);
+          } catch {
+            throw new Error(`Failed to parse JSON: ${text.substring(0, 200)}`);
+          }
+
+          return { response: resp, result: json };
+        }
+      );
+
+      if (!updateResponse.ok) {
+        return new Response(JSON.stringify({
+          error: 'Failed to update post settings',
+          status: updateResponse.status,
+          details: updateResult,
+          imagesAdded: true,
+        }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: updateResponse.status,
+        });
+      }
+
+      finalResult = updateResult;
+      lastResponseHeaders = updateResponse.headers;
+
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      return new Response(JSON.stringify({
+        error: `Images added but failed to update settings: ${message}`,
+        imagesAdded: true,
       }), {
         headers: { 'Content-Type': 'application/json' },
         status: 500,
