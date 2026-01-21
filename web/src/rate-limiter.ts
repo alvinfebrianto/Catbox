@@ -600,14 +600,18 @@ export class RateLimiter {
           'imgchest',
           null,
           async () => {
-            const updateFormData = new FormData();
-            if (privacy !== null) updateFormData.append('privacy', privacy);
-            if (nsfw !== null) updateFormData.append('nsfw', nsfw);
+            const payload: Record<string, string> = {};
+            if (privacy !== null) payload.privacy = privacy;
+            if (nsfw !== null) payload.nsfw = nsfw;
 
             const resp = await fetch(`https://api.imgchest.com/v1/post/${postId}`, {
               method: 'PATCH',
-              body: updateFormData,
-              headers: { 'Authorization': 'Bearer ' + token },
+              body: JSON.stringify(payload),
+              headers: {
+                'Authorization': 'Bearer ' + token,
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+              },
             });
 
             const headers = parseRateLimitHeaders(resp.headers);
