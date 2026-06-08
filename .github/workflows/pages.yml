@@ -22,6 +22,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
@@ -29,11 +41,11 @@ jobs:
 
       - name: Install dependencies
         working-directory: ./web
-        run: bun install
+        run: pnpm install --frozen-lockfile
 
       - name: Build project
         working-directory: ./web
-        run: bun run build:config:prod && bun run build:app
+        run: pnpm run build:config:prod && pnpm run build:app
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
