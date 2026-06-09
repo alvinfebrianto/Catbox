@@ -1,4 +1,4 @@
-import { test, expect, describe, mock, afterEach } from 'bun:test';
+import { test, expect, describe, vi, afterEach } from 'vitest';
 import workerDefault from '../src/worker';
 import { getCorsHeaders } from '../src/types';
 
@@ -198,7 +198,7 @@ describe('Catbox proxy', () => {
   });
 
   test('successful file upload', async () => {
-    setMockFetch(mock(() =>
+    setMockFetch(vi.fn(() =>
       Promise.resolve(createMockResponse('https://files.catbox.moe/abc123.png'))
     ));
 
@@ -251,7 +251,7 @@ describe('SXCU proxy', () => {
   });
 
   test('collection creation', async () => {
-    setMockFetch(mock(() =>
+    setMockFetch(vi.fn(() =>
       Promise.resolve(createMockResponse(JSON.stringify({ id: '123' })))
     ));
 

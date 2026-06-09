@@ -1,4 +1,4 @@
-import { test, expect, describe, mock, beforeEach, afterEach } from 'bun:test';
+import { test, expect, describe, vi, beforeEach, afterEach } from 'vitest';
 import { existsSync, unlinkSync } from 'fs';
 import {
   getImgchestToken,
@@ -169,7 +169,7 @@ describe('Catbox upload handler', () => {
   test('proxies file upload to catbox API', async () => {
     let capturedUrl = '';
     let capturedBody: FormData | null = null;
-    setMockFetch(mock((url, opts) => {
+    setMockFetch(vi.fn((url, opts) => {
       capturedUrl = url as string;
       capturedBody = opts?.body as FormData;
       return Promise.resolve(createMockResponse('https://files.catbox.moe/abc.png') as unknown as Response);
@@ -189,7 +189,7 @@ describe('Catbox upload handler', () => {
   });
 
   test('handles URL upload requests', async () => {
-    setMockFetch(mock(() =>
+    setMockFetch(vi.fn(() =>
       Promise.resolve(createMockResponse('https://files.catbox.moe/abc.png') as unknown as Response)
     ));
 
@@ -223,7 +223,7 @@ describe('SXCU upload handlers', () => {
   });
 
   test('creates collection and returns URL', async () => {
-    setMockFetch(mock(() =>
+    setMockFetch(vi.fn(() =>
       Promise.resolve(createMockResponse({ id: 'coll123', url: 'https://sxcu.net/c/coll123' }) as unknown as Response)
     ));
 
@@ -238,7 +238,7 @@ describe('SXCU upload handlers', () => {
   });
 
   test('uploads file and tracks rate limits', async () => {
-    setMockFetch(mock(() =>
+    setMockFetch(vi.fn(() =>
       Promise.resolve(createMockResponse(
         { url: 'https://sxcu.net/abc' },
         { headers: { 'X-RateLimit-Remaining': '58', 'X-RateLimit-Limit': '60', 'X-RateLimit-Bucket': 'files' } }
@@ -280,7 +280,7 @@ describe('Imgchest upload handlers', () => {
   test('uses custom token from Authorization header', async () => {
     delete process.env.IMGCHEST_API_TOKEN;
     let capturedAuthHeader = '';
-    setMockFetch(mock((url, options) => {
+    setMockFetch(vi.fn((url, options) => {
       capturedAuthHeader = (options as RequestInit).headers?.['Authorization'] || '';
       return Promise.resolve(createMockResponse({
         data: { id: 'post123', link: 'https://imgchest.com/p/post123' }
@@ -302,7 +302,7 @@ describe('Imgchest upload handlers', () => {
   test('custom token takes precedence over env token', async () => {
     process.env.IMGCHEST_API_TOKEN = 'env-token';
     let capturedAuthHeader = '';
-    setMockFetch(mock((url, options) => {
+    setMockFetch(vi.fn((url, options) => {
       capturedAuthHeader = (options as RequestInit).headers?.['Authorization'] || '';
       return Promise.resolve(createMockResponse({
         data: { id: 'post123', link: 'https://imgchest.com/p/post123' }
@@ -322,7 +322,7 @@ describe('Imgchest upload handlers', () => {
   });
 
   test('creates post with images', async () => {
-    setMockFetch(mock(() =>
+    setMockFetch(vi.fn(() =>
       Promise.resolve(createMockResponse({
         data: { id: 'post123', link: 'https://imgchest.com/p/post123' }
       }, { headers: { 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': '59' } }) as unknown as Response)
@@ -344,7 +344,7 @@ describe('Imgchest upload handlers', () => {
 
   test('chunks large uploads into batches of 20', async () => {
     let fetchCallCount = 0;
-    setMockFetch(mock(() => {
+    setMockFetch(vi.fn(() => {
       fetchCallCount++;
       return Promise.resolve(createMockResponse({
         data: { id: 'post123', link: 'https://imgchest.com/p/post123' }
@@ -365,7 +365,7 @@ describe('Imgchest upload handlers', () => {
 
   test('adds images to existing post', async () => {
     let capturedUrl = '';
-    setMockFetch(mock((url) => {
+    setMockFetch(vi.fn((url) => {
       capturedUrl = url as string;
       return Promise.resolve(createMockResponse({ success: true }, { headers: { 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': '58' } }) as unknown as Response);
     }));
@@ -380,7 +380,7 @@ describe('Imgchest upload handlers', () => {
   });
 
   test('handles API errors gracefully', async () => {
-    setMockFetch(mock(() =>
+    setMockFetch(vi.fn(() =>
       Promise.resolve(createMockResponse({ error: 'Invalid request' }, { status: 400, headers: { 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': '59' } }) as unknown as Response)
     ));
 

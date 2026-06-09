@@ -144,7 +144,8 @@ export default {
       method: request.method,
       headers: headers,
       body: request.body,
-    });
+      ...(request.body ? { duplex: 'half' } : {}),
+    } as RequestInit);
 
     return rateLimiter.fetch(rateLimiterRequest);
   }

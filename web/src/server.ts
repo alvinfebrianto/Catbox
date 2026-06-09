@@ -1,4 +1,6 @@
-import { serve } from 'bun';
+import { createServer, type IncomingMessage, type ServerResponse } from 'http';
+import { Readable } from 'stream';
+import { pathToFileURL } from 'url';
 import { writeFileSync, unlinkSync, mkdirSync, existsSync, readFileSync } from 'fs';
 import { resolve, normalize, extname, sep } from 'path';
 import {
@@ -833,70 +835,127 @@ function copyRateLimitHeaders(from: Headers, to: Headers): void {
   }
 }
 
-if (import.meta.main) {
+function handleRequest(req: Request): Response | Promise<Response> {
+  const url = new URL(req.url);
+  const method = req.method;
+  const path = url.pathname;
+
+  cleanupExpiredEntries();
+
+  if (method === 'POST' && path === '/upload/catbox') {
+    return handleCatboxUpload(req);
+  }
+
+  if (method === 'POST' && path === '/upload/sxcu/collections') {
+    return handleSxcuCollections(req);
+  }
+
+  if (method === 'POST' && path === '/upload/sxcu/files') {
+    return handleSxcuFiles(req);
+  }
+
+  if (method === 'POST' && path === '/upload/imgchest/post') {
+    return handleImgchestPost(req);
+  }
+
+  if (method === 'POST' && path.startsWith('/upload/imgchest/post/') && path.endsWith('/add')) {
+    return handleImgchestAdd(req);
+  }
+
+  const staticPath = safeStaticPath(path);
+  if (staticPath && existsSync(staticPath)) {
+    const data = readFileSync(staticPath);
+    const ext = extname(staticPath).slice(1).toLowerCase();
+    const contentTypes: Record<string, string> = {
+      html: 'text/html',
+      css: 'text/css',
+      js: 'application/javascript',
+      png: 'image/png',
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      gif: 'image/gif',
+      webp: 'image/webp',
+      ico: 'image/x-icon',
+    };
+    return new Response(data, {
+      headers: {
+        'Content-Type': contentTypes[ext] || 'text/plain',
+        ...SECURITY_HEADERS,
+      },
+    });
+  }
+  return new Response('Not Found', { status: 404 });
+}
+
+function toWebRequest(req: IncomingMessage): Request {
+  const host = req.headers.host ?? `localhost:${PORT}`;
+  const url = `http://${host}${req.url ?? '/'}`;
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (value === undefined) continue;
+    if (Array.isArray(value)) {
+      for (const v of value) headers.append(key, v);
+    } else {
+      headers.set(key, value);
+    }
+  }
+
+  const method = req.method ?? 'GET';
+  const hasBody = method !== 'GET' && method !== 'HEAD';
+
+  return new Request(url, {
+    method,
+    headers,
+    body: hasBody ? (Readable.toWeb(req) as unknown as ReadableStream) : undefined,
+    ...(hasBody ? { duplex: 'half' } : {}),
+  } as RequestInit);
+}
+
+async function sendWebResponse(res: ServerResponse, webRes: Response): Promise<void> {
+  res.statusCode = webRes.status;
+  webRes.headers.forEach((value, key) => {
+    res.setHeader(key, value);
+  });
+
+  if (webRes.body) {
+    const nodeStream = Readable.fromWeb(webRes.body as unknown as Parameters<typeof Readable.fromWeb>[0]);
+    await new Promise<void>((resolveStream, rejectStream) => {
+      nodeStream.on('error', rejectStream);
+      res.on('finish', () => resolveStream());
+      res.on('error', rejectStream);
+      nodeStream.pipe(res);
+    });
+  } else {
+    res.end();
+  }
+}
+
+const isMain = import.meta.url === pathToFileURL(process.argv[1] ?? '').href;
+
+if (isMain) {
   if (!existsSync(TEMP_DIR)) {
     mkdirSync(TEMP_DIR, { recursive: true });
   }
 
   loadRateLimits();
 
-  const server = serve({
-    port: PORT,
-
-    fetch(req: Request): Response | Promise<Response> {
-      const url = new URL(req.url);
-      const method = req.method;
-      const path = url.pathname;
-
-      cleanupExpiredEntries();
-
-      if (method === 'POST' && path === '/upload/catbox') {
-        return handleCatboxUpload(req);
+  const server = createServer((req, res) => {
+    void (async () => {
+      try {
+        const request = toWebRequest(req);
+        const response = await handleRequest(request);
+        await sendWebResponse(res, response);
+      } catch (err) {
+        console.error(err);
+        if (!res.headersSent) res.statusCode = 500;
+        if (!res.writableEnded) res.end('Internal Server Error');
       }
-
-      if (method === 'POST' && path === '/upload/sxcu/collections') {
-        return handleSxcuCollections(req);
-      }
-
-      if (method === 'POST' && path === '/upload/sxcu/files') {
-        return handleSxcuFiles(req);
-      }
-
-      if (method === 'POST' && path === '/upload/imgchest/post') {
-        return handleImgchestPost(req);
-      }
-
-      if (method === 'POST' && path.startsWith('/upload/imgchest/post/') && path.endsWith('/add')) {
-        return handleImgchestAdd(req);
-      }
-
-      const staticPath = safeStaticPath(path);
-      if (staticPath && existsSync(staticPath)) {
-        const file = Bun.file(staticPath);
-        const ext = extname(staticPath).slice(1).toLowerCase();
-        const contentTypes: Record<string, string> = {
-          html: 'text/html',
-          css: 'text/css',
-          js: 'application/javascript',
-          png: 'image/png',
-          jpg: 'image/jpeg',
-          jpeg: 'image/jpeg',
-          gif: 'image/gif',
-          webp: 'image/webp',
-          ico: 'image/x-icon',
-        };
-        return new Response(file, {
-          headers: {
-            'Content-Type': contentTypes[ext] || 'text/plain',
-            ...SECURITY_HEADERS,
-          },
-        });
-      }
-      return new Response('Not Found', { status: 404 });
-    },
+    })();
   });
 
-  console.log(`Server running at http://localhost:${PORT}`);
+  server.listen(PORT, () => {
+    console.log(`Server running at http://localhost:${PORT}`);
+  });
 }
 
 export {
