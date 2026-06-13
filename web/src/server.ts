@@ -18,6 +18,7 @@ import {
   calculateWaitTimeFromHeaders,
   isRateLimitExpired,
   createRateLimitEntry,
+  validateKekFiles,
 } from './types';
 
 const PORT = 3000;
@@ -117,6 +118,10 @@ function cleanupExpiredEntries(): void {
 
 function getImgchestToken(): string | null {
   return process.env.IMGCHEST_API_TOKEN || null;
+}
+
+function getKekKey(): string | null {
+  return process.env.KEK_API_KEY || null;
 }
 
 function getBearerToken(req: Request): string | null {
@@ -403,6 +408,84 @@ async function handleCatboxUpload(req: Request): Promise<Response> {
       lastError = error instanceof Error ? error : new Error(String(error));
       if (DEBUG) {
         console.error(`[Catbox] Error on attempt ${attempt + 1}:`, lastError.message);
+      }
+
+      if (attempt < DEFAULT_RETRY_CONFIG.maxRetries) {
+        const waitMs = calculateExponentialBackoff(attempt);
+        await new Promise(resolve => setTimeout(resolve, waitMs));
+        continue;
+      }
+    }
+  }
+
+  return new Response(JSON.stringify({ error: lastError?.message || 'Unknown error' }), {
+    status: 500,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+async function handleKekPost(req: Request): Promise<Response> {
+  const apiKey = req.headers.get('X-Kek-Auth')?.trim() || getKekKey();
+  if (!apiKey) {
+    return new Response(JSON.stringify({
+      error: 'kek API key not found. Provide a custom API key in the UI or set KEK_API_KEY environment variable in .env file'
+    }), {
+      headers: { 'Content-Type': 'application/json' },
+      status: 401,
+    });
+  }
+
+  const formData = await req.formData();
+  const files = formData.getAll('file') as File[];
+
+  const validation = validateKekFiles(files);
+  if (!validation.ok) {
+    return new Response(JSON.stringify({ error: validation.error }), {
+      headers: { 'Content-Type': 'application/json' },
+      status: 400,
+    });
+  }
+
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= DEFAULT_RETRY_CONFIG.maxRetries; attempt++) {
+    try {
+      const response = await fetch('https://kek.sh/api/v1/posts', {
+        method: 'POST',
+        body: formData,
+        headers: {
+          'x-kek-auth': apiKey,
+          'User-Agent': 'CatboxUploader/2.0',
+        },
+      });
+
+      const text = await response.text();
+
+      if (response.ok) {
+        return new Response(text, {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (response.status === 429 && attempt < DEFAULT_RETRY_CONFIG.maxRetries) {
+        if (DEBUG) {
+          console.log(`[kek] Rate limited, attempt ${attempt + 1}`);
+        }
+        const waitMs = calculateExponentialBackoff(attempt);
+        await new Promise(resolve => setTimeout(resolve, waitMs));
+        continue;
+      }
+
+      return new Response(text, {
+        status: response.status,
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (DEBUG) {
+        console.error(`[kek] Error on attempt ${attempt + 1}:`, lastError.message);
       }
 
       if (attempt < DEFAULT_RETRY_CONFIG.maxRetries) {
@@ -846,6 +929,10 @@ function handleRequest(req: Request): Response | Promise<Response> {
     return handleCatboxUpload(req);
   }
 
+  if (method === 'POST' && path === '/upload/kek/posts') {
+    return handleKekPost(req);
+  }
+
   if (method === 'POST' && path === '/upload/sxcu/collections') {
     return handleSxcuCollections(req);
   }
@@ -960,6 +1047,8 @@ if (isMain) {
 
 export {
   getImgchestToken,
+  getKekKey,
+  handleKekPost,
   loadRateLimits,
   saveRateLimits,
   resetRateLimits,

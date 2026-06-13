@@ -1,4 +1,4 @@
-export type Provider = 'catbox' | 'sxcu' | 'imgchest';
+export type Provider = 'catbox' | 'sxcu' | 'imgchest' | 'kek';
 
 export interface UploadResult {
   type: 'success' | 'error' | 'warning';
@@ -112,6 +112,7 @@ export interface SxcuCollectionResponse {
 
 export interface WorkerEnv {
   IMGCHEST_API_TOKEN?: string;
+  KEK_API_KEY?: string;
   RATE_LIMITER?: DurableObjectNamespace;
 }
 
@@ -124,7 +125,7 @@ const ALLOWED_ORIGINS = new Set([
 export function getCorsHeaders(origin: string | null): Record<string, string> {
   const headers: Record<string, string> = {
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Proxy-Auth',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Proxy-Auth, X-Kek-Auth',
     'Access-Control-Max-Age': '86400',
     'Vary': 'Origin',
   };
@@ -151,6 +152,9 @@ export const MAX_FILE_COUNT = 50;
 
 export const IMGCHEST_MAX_FILE_SIZE = 30 * 1024 * 1024;
 export const IMGCHEST_ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.mp4'];
+
+export const KEK_MAX_FILE_SIZE = 50 * 1024 * 1024;
+export const KEK_ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
 
 export interface FileValidationResult {
   ok: boolean;
@@ -213,6 +217,29 @@ export function validateImgchestFiles(files: File[]): FileValidationResult {
     const ext = '.' + (f.name.split('.').pop() || '').toLowerCase();
     if (!IMGCHEST_ALLOWED_EXTENSIONS.includes(ext)) {
       return { ok: false, error: `Unsupported file type for Imgchest: ${f.name}. Only jpg, jpeg, png, gif, webp, and mp4 are allowed.` };
+    }
+  }
+
+  return { ok: true };
+}
+
+export function validateKekFiles(files: File[]): FileValidationResult {
+  if (files.length === 0) {
+    return { ok: false, error: 'No files provided' };
+  }
+
+  for (const f of files) {
+    if (f.size <= 0) {
+      return { ok: false, error: 'Empty file' };
+    }
+
+    if (f.size > KEK_MAX_FILE_SIZE) {
+      return { ok: false, error: `File too large: ${f.name} (max 50MB for kek)` };
+    }
+
+    const ext = '.' + (f.name.split('.').pop() || '').toLowerCase();
+    if (!KEK_ALLOWED_EXTENSIONS.includes(ext)) {
+      return { ok: false, error: `Unsupported file type for kek: ${f.name}. Only jpg, jpeg, png, gif, and webp are allowed.` };
     }
   }
 

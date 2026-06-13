@@ -23,6 +23,7 @@
                     <option value="catbox">catbox</option>
                     <option value="sxcu">sxcu</option>
                     <option value="imgchest" selected>imgchest</option>
+                    <option value="kek">kek</option>
                 </select>
             </div>
 
@@ -44,7 +45,7 @@
                 <input type="text" id="urls" name="urls" placeholder="https://example.com/image.jpg, https://example.com/image2.png">
             </div>
 
-            <div class="form-group">
+            <div class="form-group" id="titleGroup">
                 <label for="title">Title</label>
                 <input type="text" id="title" name="title" placeholder="Optional title">
             </div>
@@ -106,6 +107,15 @@
                     <button type="button" id="toggleApiKeyVisibility" class="toggle-visibility-btn" title="Toggle visibility">👁</button>
                 </div>
                 <p class="hint">Leave empty to use default. <a href="https://imgchest.com/docs/api/1.0/general/authorization" target="_blank">Get your token</a></p>
+            </div>
+
+            <div class="form-group hidden" id="kekApiKeyGroup">
+                <label for="kekApiKey">kek API Key (optional)</label>
+                <div class="api-key-input-wrapper">
+                    <input type="password" id="kekApiKey" name="kekApiKey" placeholder="Your personal API key">
+                    <button type="button" id="toggleKekApiKeyVisibility" class="toggle-visibility-btn" title="Toggle visibility">👁</button>
+                </div>
+                <p class="hint">Leave empty to use default. <a href="https://kek.sh/settings/api" target="_blank">Get your key</a></p>
             </div>
 
             <div class="form-group checkbox-group hidden" id="createAlbumGroup">

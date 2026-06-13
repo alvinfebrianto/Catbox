@@ -1,4 +1,4 @@
-import { Provider, UploadResult, ALLOWED_EXTENSIONS, IMGCHEST_ALLOWED_EXTENSIONS, IMGCHEST_MAX_FILE_SIZE, validateImgchestFiles } from './types';
+import { Provider, UploadResult, ALLOWED_EXTENSIONS, IMGCHEST_ALLOWED_EXTENSIONS, IMGCHEST_MAX_FILE_SIZE, KEK_ALLOWED_EXTENSIONS, validateImgchestFiles, validateKekFiles } from './types';
 
 declare const API_BASE_URL: string;
 
@@ -63,6 +63,10 @@ class ImageUploader {
   private imgchestApiKeyGroup!: HTMLElement;
   private imgchestApiKeyInput!: HTMLInputElement;
   private toggleApiKeyBtn!: HTMLButtonElement;
+  private kekApiKeyGroup!: HTMLElement;
+  private kekApiKeyInput!: HTMLInputElement;
+  private toggleKekApiKeyBtn!: HTMLButtonElement;
+  private titleGroup!: HTMLElement;
   private descriptionGroup!: HTMLElement;
   private imgchestOptions!: HTMLElement;
   private imgchestPrivacySelect!: HTMLSelectElement;
@@ -84,6 +88,12 @@ class ImageUploader {
 
   private getAuthHeaders(): Record<string, string> {
     return {};
+  }
+
+  private getAllowedExtensions(): string[] {
+    if (this.provider === 'imgchest') return IMGCHEST_ALLOWED_EXTENSIONS;
+    if (this.provider === 'kek') return KEK_ALLOWED_EXTENSIONS;
+    return ALLOWED_EXTENSIONS;
   }
 
   private init(): void {
@@ -110,6 +120,10 @@ class ImageUploader {
     this.imgchestApiKeyGroup = document.getElementById('imgchestApiKeyGroup') as HTMLElement;
     this.imgchestApiKeyInput = document.getElementById('imgchestApiKey') as HTMLInputElement;
     this.toggleApiKeyBtn = document.getElementById('toggleApiKeyVisibility') as HTMLButtonElement;
+    this.kekApiKeyGroup = document.getElementById('kekApiKeyGroup') as HTMLElement;
+    this.kekApiKeyInput = document.getElementById('kekApiKey') as HTMLInputElement;
+    this.toggleKekApiKeyBtn = document.getElementById('toggleKekApiKeyVisibility') as HTMLButtonElement;
+    this.titleGroup = document.getElementById('titleGroup') as HTMLElement;
     this.descriptionGroup = document.getElementById('descriptionGroup') as HTMLElement;
     this.imgchestOptions = document.getElementById('imgchestOptions') as HTMLElement;
     this.imgchestPrivacySelect = document.getElementById('imgchestPrivacy') as HTMLSelectElement;
@@ -125,6 +139,11 @@ class ImageUploader {
     }
     if (savedApiKey && this.imgchestApiKeyInput) {
       this.imgchestApiKeyInput.value = savedApiKey;
+    }
+
+    const savedKekApiKey = sessionStorage.getItem('kek_api_key');
+    if (savedKekApiKey && this.kekApiKeyInput) {
+      this.kekApiKeyInput.value = savedKekApiKey;
     }
 
     this.bindEvents();
@@ -181,6 +200,29 @@ class ImageUploader {
       });
     }
 
+    if (this.kekApiKeyInput) {
+      this.kekApiKeyInput.addEventListener('change', () => {
+        const value = this.kekApiKeyInput.value.trim();
+        if (value) {
+          sessionStorage.setItem('kek_api_key', value);
+        } else {
+          sessionStorage.removeItem('kek_api_key');
+        }
+      });
+    }
+
+    if (this.toggleKekApiKeyBtn) {
+      this.toggleKekApiKeyBtn.addEventListener('click', () => {
+        if (this.kekApiKeyInput.type === 'password') {
+          this.kekApiKeyInput.type = 'text';
+          this.toggleKekApiKeyBtn.textContent = '🙈';
+        } else {
+          this.kekApiKeyInput.type = 'password';
+          this.toggleKekApiKeyBtn.textContent = '👁';
+        }
+      });
+    }
+
     this.filesInput.addEventListener('change', (e) => {
       if (this.uploadCompleted) {
         this.files = [];
@@ -195,7 +237,7 @@ class ImageUploader {
       const input = e.target as HTMLInputElement;
       const fileList = input.files;
       if (fileList && fileList.length > 0) {
-        const allowedExtensions = this.provider === 'imgchest' ? IMGCHEST_ALLOWED_EXTENSIONS : ALLOWED_EXTENSIONS;
+        const allowedExtensions = this.getAllowedExtensions();
         for (let i = 0; i < fileList.length; i++) {
           const file = fileList[i];
           const ext = '.' + file.name.split('.').pop()?.toLowerCase();
@@ -299,8 +341,9 @@ class ImageUploader {
     const isSxcu = this.provider === 'sxcu';
     const isImgchest = this.provider === 'imgchest';
     const isCatbox = this.provider === 'catbox';
+    const isKek = this.provider === 'kek';
 
-    this.urlGroup.classList.toggle('hidden', isSxcu || isImgchest);
+    this.urlGroup.classList.toggle('hidden', isSxcu || isImgchest || isKek);
     this.createCollectionGroup.classList.toggle('hidden', !isSxcu);
 
     if (this.sxcuOptions) {
@@ -315,8 +358,14 @@ class ImageUploader {
     if (this.imgchestOptions) {
       this.imgchestOptions.classList.toggle('hidden', !isImgchest);
     }
+    if (this.kekApiKeyGroup) {
+      this.kekApiKeyGroup.classList.toggle('hidden', !isKek);
+    }
     if (this.descriptionGroup) {
-      this.descriptionGroup.classList.toggle('hidden', isImgchest);
+      this.descriptionGroup.classList.toggle('hidden', isImgchest || isKek);
+    }
+    if (this.titleGroup) {
+      this.titleGroup.classList.toggle('hidden', isKek);
     }
     this.updatePostIdVisibility();
     this.updateAnonymousWarning();
@@ -327,17 +376,15 @@ class ImageUploader {
       createAlbumGroup.classList.toggle('hidden', !isCatbox);
     }
 
-    if (isImgchest) {
-      this.filesInput.setAttribute('accept', IMGCHEST_ALLOWED_EXTENSIONS.join(','));
-    } else {
-      this.filesInput.setAttribute('accept', ALLOWED_EXTENSIONS.join(','));
-    }
+    this.filesInput.setAttribute('accept', this.getAllowedExtensions().join(','));
 
     if (this.fileTypesHint) {
       if (isCatbox) {
         this.fileTypesHint.textContent = 'Blocked: EXE, SCR, CPL, DOC*, JAR';
       } else if (isSxcu) {
         this.fileTypesHint.textContent = 'Allowed: PNG, GIF, JPEG, ICO, BMP, TIFF, WEBM, WEBP';
+      } else if (isKek) {
+        this.fileTypesHint.textContent = 'Allowed: JPG, JPEG, PNG, GIF, WEBP (max 50MB)';
       } else {
         this.fileTypesHint.textContent = 'Allowed: JPG, JPEG, PNG, GIF, WEBP, MP4 (max 30MB)';
       }
@@ -345,7 +392,7 @@ class ImageUploader {
   }
 
   private addFiles(fileList: FileList): void {
-    const allowedExtensions = this.provider === 'imgchest' ? IMGCHEST_ALLOWED_EXTENSIONS : ALLOWED_EXTENSIONS;
+    const allowedExtensions = this.getAllowedExtensions();
     for (let i = 0; i < fileList.length; i++) {
       const file = fileList[i];
       const ext = '.' + file.name.split('.').pop()?.toLowerCase();
@@ -438,6 +485,9 @@ class ImageUploader {
           break;
         case 'imgchest':
           this.uploadToImgchest(results);
+          break;
+        case 'kek':
+          this.uploadToKek(results);
           break;
       }
     } catch (error) {
@@ -578,6 +628,71 @@ class ImageUploader {
     };
 
     processNext();
+  }
+
+  private uploadToKek(results: UploadResult[]): void {
+    const validation = validateKekFiles(this.files);
+    if (!validation.ok) {
+      this.showError(validation.error || 'Invalid files');
+      this.setLoading(false);
+      this.progressDiv.style.display = 'none';
+      return;
+    }
+
+    const totalFiles = this.files.length;
+    let completedFiles = 0;
+
+    const customKey = this.kekApiKeyInput?.value.trim();
+
+    const uploadNextFile = (index: number): void => {
+      if (index >= this.files.length) {
+        this.updateProgress(100, 'Done!');
+        this.displayResults(results, totalFiles);
+        return;
+      }
+
+      const file = this.files[index];
+      this.updateProgress((index / totalFiles) * 100, 'Uploading ' + file.name + '...');
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const headers: Record<string, string> = { ...this.getAuthHeaders() };
+      if (customKey) {
+        headers['X-Kek-Auth'] = customKey;
+      }
+
+      fetch(this.apiBaseUrl + '/upload/kek/posts', { method: 'POST', body: formData, headers })
+        .then(response => response.text())
+        .then(text => {
+          let data: { filename?: string; error?: string };
+          try {
+            data = JSON.parse(text);
+          } catch {
+            throw new Error('Unexpected response: ' + text.substring(0, 200));
+          }
+
+          if (data.error || !data.filename) {
+            throw new Error(data.error || 'Upload failed');
+          }
+
+          const result: UploadResult = { type: 'success', url: 'https://i.kek.sh/' + data.filename };
+          results.push(result);
+          this.addIncrementalResult(result, results.length - 1);
+          completedFiles++;
+          this.updateProgress((completedFiles / totalFiles) * 100, 'Uploaded ' + completedFiles + ' of ' + totalFiles);
+          uploadNextFile(index + 1);
+        })
+        .catch(error => {
+          const result: UploadResult = { type: 'error', message: 'Failed to upload ' + file.name + ': ' + error.message };
+          results.push(result);
+          this.addIncrementalResult(result, results.length - 1);
+          completedFiles++;
+          uploadNextFile(index + 1);
+        });
+    };
+
+    uploadNextFile(0);
   }
 
   private uploadToSxcu(results: UploadResult[]): void {
