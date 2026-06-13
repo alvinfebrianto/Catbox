@@ -108,13 +108,43 @@ async function handleKekUpload(req: Request, corsHeaders: Record<string, string>
 
   const formData = await req.formData();
   const files = formData.getAll('file') as File[];
+  const url = formData.get('url') as string | null;
 
-  const validation = validateKekFiles(files);
-  if (!validation.ok) {
-    return new Response(JSON.stringify({ error: validation.error }), {
+  if (files.length > 0 && url) {
+    return new Response(JSON.stringify({ error: 'Cannot upload both files and URLs in the same request' }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 400,
     });
+  }
+
+  const isUrlUpload = !!url;
+
+  if (isUrlUpload) {
+    try {
+      new URL(url);
+    } catch {
+      return new Response(JSON.stringify({ error: 'Invalid URL' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 400,
+      });
+    }
+  } else {
+    const validation = validateKekFiles(files);
+    if (!validation.ok) {
+      return new Response(JSON.stringify({ error: validation.error }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 400,
+      });
+    }
+  }
+
+  const kekFormData = new FormData();
+  if (isUrlUpload) {
+    kekFormData.append('url', url!);
+  } else {
+    for (const file of files) {
+      kekFormData.append('file', file);
+    }
   }
 
   let lastError: Error | null = null;
@@ -123,7 +153,7 @@ async function handleKekUpload(req: Request, corsHeaders: Record<string, string>
     try {
       const response = await fetch('https://kek.sh/api/v1/posts', {
         method: 'POST',
-        body: formData,
+        body: kekFormData,
         headers: {
           'x-kek-auth': apiKey,
           'User-Agent': 'CatboxUploader/2.0',

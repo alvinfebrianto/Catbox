@@ -343,7 +343,7 @@ class ImageUploader {
     const isCatbox = this.provider === 'catbox';
     const isKek = this.provider === 'kek';
 
-    this.urlGroup.classList.toggle('hidden', isSxcu || isImgchest || isKek);
+    this.urlGroup.classList.toggle('hidden', isSxcu || isImgchest);
     this.createCollectionGroup.classList.toggle('hidden', !isSxcu);
 
     if (this.sxcuOptions) {
@@ -487,7 +487,7 @@ class ImageUploader {
           this.uploadToImgchest(results);
           break;
         case 'kek':
-          this.uploadToKek(results);
+          this.uploadToKek(results, urls);
           break;
       }
     } catch (error) {
@@ -630,32 +630,52 @@ class ImageUploader {
     processNext();
   }
 
-  private uploadToKek(results: UploadResult[]): void {
-    const validation = validateKekFiles(this.files);
-    if (!validation.ok) {
-      this.showError(validation.error || 'Invalid files');
+  private uploadToKek(results: UploadResult[], urls: string[]): void {
+    if (this.files.length > 0) {
+      const validation = validateKekFiles(this.files);
+      if (!validation.ok) {
+        this.showError(validation.error || 'Invalid files');
+        this.setLoading(false);
+        this.progressDiv.style.display = 'none';
+        return;
+      }
+    }
+
+    type QueueItem = { type: 'file'; file: File } | { type: 'url'; url: string };
+    const queue: QueueItem[] = [
+      ...this.files.map(f => ({ type: 'file' as const, file: f })),
+      ...urls.map(u => ({ type: 'url' as const, url: u })),
+    ];
+
+    if (queue.length === 0) {
+      this.showError('Please select at least one file or enter URLs');
       this.setLoading(false);
       this.progressDiv.style.display = 'none';
       return;
     }
 
-    const totalFiles = this.files.length;
-    let completedFiles = 0;
+    const totalItems = queue.length;
+    let completedItems = 0;
 
     const customKey = this.kekApiKeyInput?.value.trim();
 
-    const uploadNextFile = (index: number): void => {
-      if (index >= this.files.length) {
+    const processNext = (index: number): void => {
+      if (index >= queue.length) {
         this.updateProgress(100, 'Done!');
-        this.displayResults(results, totalFiles);
+        this.displayResults(results, totalItems);
         return;
       }
 
-      const file = this.files[index];
-      this.updateProgress((index / totalFiles) * 100, 'Uploading ' + file.name + '...');
+      const item = queue[index];
+      const label = item.type === 'file' ? item.file.name : item.url;
+      this.updateProgress((index / totalItems) * 100, 'Uploading ' + label + '...');
 
       const formData = new FormData();
-      formData.append('file', file);
+      if (item.type === 'file') {
+        formData.append('file', item.file);
+      } else {
+        formData.append('url', item.url);
+      }
 
       const headers: Record<string, string> = { ...this.getAuthHeaders() };
       if (customKey) {
@@ -679,20 +699,23 @@ class ImageUploader {
           const result: UploadResult = { type: 'success', url: 'https://i.kek.sh/' + data.filename };
           results.push(result);
           this.addIncrementalResult(result, results.length - 1);
-          completedFiles++;
-          this.updateProgress((completedFiles / totalFiles) * 100, 'Uploaded ' + completedFiles + ' of ' + totalFiles);
-          uploadNextFile(index + 1);
+          completedItems++;
+          this.updateProgress((completedItems / totalItems) * 100, 'Uploaded ' + completedItems + ' of ' + totalItems);
+          processNext(index + 1);
         })
         .catch(error => {
-          const result: UploadResult = { type: 'error', message: 'Failed to upload ' + file.name + ': ' + error.message };
+          const errMsg = item.type === 'file'
+            ? 'Failed to upload ' + item.file.name + ': ' + error.message
+            : 'Failed to upload URL ' + item.url + ': ' + error.message;
+          const result: UploadResult = { type: 'error', message: errMsg };
           results.push(result);
           this.addIncrementalResult(result, results.length - 1);
-          completedFiles++;
-          uploadNextFile(index + 1);
+          completedItems++;
+          processNext(index + 1);
         });
     };
 
-    uploadNextFile(0);
+    processNext(0);
   }
 
   private uploadToSxcu(results: UploadResult[]): void {
