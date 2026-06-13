@@ -66,6 +66,8 @@ class ImageUploader {
   private kekApiKeyGroup!: HTMLElement;
   private kekApiKeyInput!: HTMLInputElement;
   private toggleKekApiKeyBtn!: HTMLButtonElement;
+  private kekMatureGroup!: HTMLElement;
+  private kekMatureCheckbox!: HTMLInputElement;
   private titleGroup!: HTMLElement;
   private descriptionGroup!: HTMLElement;
   private imgchestOptions!: HTMLElement;
@@ -123,6 +125,8 @@ class ImageUploader {
     this.kekApiKeyGroup = document.getElementById('kekApiKeyGroup') as HTMLElement;
     this.kekApiKeyInput = document.getElementById('kekApiKey') as HTMLInputElement;
     this.toggleKekApiKeyBtn = document.getElementById('toggleKekApiKeyVisibility') as HTMLButtonElement;
+    this.kekMatureGroup = document.getElementById('kekMatureGroup') as HTMLElement;
+    this.kekMatureCheckbox = document.getElementById('kekMature') as HTMLInputElement;
     this.titleGroup = document.getElementById('titleGroup') as HTMLElement;
     this.descriptionGroup = document.getElementById('descriptionGroup') as HTMLElement;
     this.imgchestOptions = document.getElementById('imgchestOptions') as HTMLElement;
@@ -360,6 +364,9 @@ class ImageUploader {
     }
     if (this.kekApiKeyGroup) {
       this.kekApiKeyGroup.classList.toggle('hidden', !isKek);
+    }
+    if (this.kekMatureGroup) {
+      this.kekMatureGroup.classList.toggle('hidden', !isKek);
     }
     if (this.descriptionGroup) {
       this.descriptionGroup.classList.toggle('hidden', isImgchest || isKek);
@@ -658,6 +665,7 @@ class ImageUploader {
     let completedItems = 0;
 
     const customKey = this.kekApiKeyInput?.value.trim();
+    const isMature = this.kekMatureCheckbox?.checked;
 
     const processNext = (index: number): void => {
       if (index >= queue.length) {
@@ -676,6 +684,7 @@ class ImageUploader {
       } else {
         formData.append('url', item.url);
       }
+      formData.append('mature', isMature ? 'true' : 'false');
 
       const headers: Record<string, string> = { ...this.getAuthHeaders() };
       if (customKey) {

@@ -22,3 +22,6 @@ Exponential backoff retry logic applied to failed upload requests (429 responses
 
 ### File Validation
 Extension and size checks applied client-side before upload. For URL uploads, only URL format validation (valid HTTP/HTTPS URL) is performed.
+
+### Mature Flag (kek)
+A boolean NSFW/content flag settable on kek.sh posts. The app sets it after upload via `PUT /posts/:id/mature`. Defaults to `true` (mature) with an optional UI checkbox to opt out.

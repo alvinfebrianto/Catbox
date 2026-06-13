@@ -16,7 +16,7 @@
     "dev": "pnpm run build:dev && concurrently -k -n config,app,server,node \"esbuild src/config.dev.ts --bundle --outfile=dist/config.js --platform=browser --watch=forever\" \"esbuild src/app.ts --bundle --outfile=dist/app.js --platform=browser --watch=forever\" \"esbuild src/server.ts --bundle --outfile=dist/server.js --platform=node --format=esm --watch=forever\" \"node --watch --env-file=.env dist/server.js\"",
     "typecheck": "pnpm exec tsc --noEmit",
     "test": "vitest run",
-    "deploy": "pnpm run build && wrangler deploy"
+    "deploy": "pnpm run build && pnpm wrangler deploy"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240117.0",
@@ -24,6 +24,7 @@
     "concurrently": "^10.0.3",
     "esbuild": "^0.28.0",
     "typescript": "^5.3.0",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.8",
+    "wrangler": "^4.100.0"
   }
 }

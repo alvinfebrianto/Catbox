@@ -438,6 +438,7 @@ async function handleKekPost(req: Request): Promise<Response> {
   const formData = await req.formData();
   const files = formData.getAll('file') as File[];
   const url = formData.get('url') as string | null;
+  const mature = formData.get('mature') as string | null;
 
   if (files.length > 0 && url) {
     return new Response(JSON.stringify({ error: 'Cannot upload both files and URLs in the same request' }), {
@@ -476,6 +477,8 @@ async function handleKekPost(req: Request): Promise<Response> {
     }
   }
 
+  const shouldSetMature = mature !== 'false';
+
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt <= DEFAULT_RETRY_CONFIG.maxRetries; attempt++) {
@@ -492,6 +495,39 @@ async function handleKekPost(req: Request): Promise<Response> {
       const text = await response.text();
 
       if (response.ok) {
+        let data: Record<string, unknown>;
+        try {
+          data = JSON.parse(text);
+        } catch {
+          return new Response(text, {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        const postId = data.id;
+        if (postId != null && shouldSetMature) {
+          try {
+            const matureResp = await fetch(`https://kek.sh/api/v1/posts/${postId}/mature`, {
+              method: 'PUT',
+              headers: {
+                'x-kek-auth': apiKey,
+                'Content-Type': 'application/json',
+                'User-Agent': 'CatboxUploader/2.0',
+              },
+              body: JSON.stringify({ value: true }),
+            });
+
+            if (!matureResp.ok && DEBUG) {
+              console.warn(`[kek] Failed to set mature for post ${postId}: ${matureResp.status}`);
+            }
+          } catch (matureError) {
+            if (DEBUG) {
+              console.warn(`[kek] Error setting mature for post ${postId}:`, matureError);
+            }
+          }
+        }
+
         return new Response(text, {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
