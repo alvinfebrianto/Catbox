@@ -13,7 +13,7 @@
     "build:app": "esbuild src/app.ts --bundle --outfile=dist/app.js --platform=browser --minify",
     "build:server": "esbuild src/server.ts --bundle --outfile=dist/server.js --platform=node --format=esm",
     "build:worker": "esbuild src/worker.ts --bundle --outfile=dist/worker.js --platform=browser --format=esm",
-    "dev": "pnpm run build:dev && node dist/server.js",
+    "dev": "pnpm run build:dev && concurrently -k -n config,app,server,node \"esbuild src/config.dev.ts --bundle --outfile=dist/config.js --platform=browser --watch=forever\" \"esbuild src/app.ts --bundle --outfile=dist/app.js --platform=browser --watch=forever\" \"esbuild src/server.ts --bundle --outfile=dist/server.js --platform=node --format=esm --watch=forever\" \"node --watch --env-file=.env dist/server.js\"",
     "typecheck": "pnpm exec tsc --noEmit",
     "test": "vitest run",
     "deploy": "pnpm run build && wrangler deploy"
@@ -21,6 +21,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240117.0",
     "@types/node": "^25.9.2",
+    "concurrently": "^10.0.3",
     "esbuild": "^0.28.0",
     "typescript": "^5.3.0",
     "vitest": "^4.1.8"
