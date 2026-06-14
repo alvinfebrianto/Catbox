@@ -598,7 +598,8 @@ var httpClient = &http.Client{
 }
 
 const (
-	kekAPIBaseURL = "https://kek.sh/api/v1"
+	kekAPIBaseURL  = "https://kek.sh/api/v1"
+	kekFileBaseURL = "https://i.kek.sh/"
 )
 
 type KekPostResponse struct {
@@ -619,7 +620,7 @@ func (r *KekPostResponse) GetURL() string {
 		return r.Link
 	}
 	if r.Filename != "" {
-		return "https://kek.sh/" + neturl.PathEscape(r.Filename)
+		return kekFileBaseURL + neturl.PathEscape(r.Filename)
 	}
 	return ""
 }
