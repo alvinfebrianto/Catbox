@@ -14,31 +14,35 @@ var timeNow = time.Now
 var timeSleep = time.Sleep
 
 type App struct {
-	mainWindow      *walk.MainWindow
-	fileListBox     *walk.ListBox
-	fileListModel   *FileListModel
-	urlEdit         *walk.LineEdit
-	titleEdit       *walk.LineEdit
-	descEdit        *walk.LineEdit
-	descComposite   *walk.Composite
-	providerCombo   *walk.ComboBox
-	albumCheck         *walk.CheckBox
-	collectionCheck    *walk.CheckBox
-	sxcuPrivateCheck *walk.CheckBox
-	anonymousCheck     *walk.CheckBox
-	privacyCombo    *walk.ComboBox
-	nsfwCheck       *walk.CheckBox
-	postIDEdit      *walk.LineEdit
+	mainWindow        *walk.MainWindow
+	fileListBox       *walk.ListBox
+	fileListModel     *FileListModel
+	urlEdit           *walk.LineEdit
+	titleEdit         *walk.LineEdit
+	titleComposite    *walk.Composite
+	descEdit          *walk.LineEdit
+	descComposite     *walk.Composite
+	providerCombo     *walk.ComboBox
+	albumCheck        *walk.CheckBox
+	collectionCheck   *walk.CheckBox
+	sxcuPrivateCheck  *walk.CheckBox
+	anonymousCheck    *walk.CheckBox
+	privacyCombo      *walk.ComboBox
+	nsfwCheck         *walk.CheckBox
+	kekApiKeyEdit     *walk.LineEdit
+	kekMatureCheck    *walk.CheckBox
+	postIDEdit        *walk.LineEdit
 	imgchestTokenEdit *walk.LineEdit
-	outputEdit      *walk.TextEdit
-	uploadButton    *walk.PushButton
-	selectedFiles   []string
-	uploadCompleted bool
+	outputEdit        *walk.TextEdit
+	uploadButton      *walk.PushButton
+	selectedFiles     []string
+	uploadCompleted   bool
 
 	urlComposite          *walk.Composite
 	catboxOptsComposite   *walk.Composite
 	sxcuOptsComposite     *walk.Composite
 	imgchestOptsComposite *walk.Composite
+	kekOptsComposite      *walk.Composite
 }
 
 type FileItem struct {
@@ -69,7 +73,7 @@ func NewApp() *App {
 }
 
 func (a *App) Run() error {
-	providers := []string{"catbox", "sxcu", "imgchest"}
+	providers := []string{"catbox", "sxcu", "imgchest", "kek"}
 
 	icon, _ := walk.NewIconFromFile("favicon.ico")
 
@@ -140,7 +144,8 @@ func (a *App) Run() error {
 			},
 
 			Composite{
-				Layout: HBox{MarginsZero: true, Spacing: 6},
+				AssignTo: &a.titleComposite,
+				Layout:   HBox{MarginsZero: true, Spacing: 6},
 				Children: []Widget{
 					Label{Text: "Title:", MinSize: Size{Width: 70}, MaxSize: Size{Width: 70}},
 					LineEdit{
@@ -244,6 +249,34 @@ func (a *App) Run() error {
 				},
 			},
 
+			Composite{
+				AssignTo: &a.kekOptsComposite,
+				Layout:   VBox{MarginsZero: true, Spacing: 8},
+				Visible:  false,
+				Children: []Widget{
+					Composite{
+						Layout: HBox{MarginsZero: true, Spacing: 6},
+						Children: []Widget{
+							Label{Text: "API Key:", MinSize: Size{Width: 70}, MaxSize: Size{Width: 70}},
+							LineEdit{
+								AssignTo:     &a.kekApiKeyEdit,
+								PasswordMode: true,
+							},
+						},
+					},
+					Composite{
+						Layout: HBox{MarginsZero: true, Spacing: 6},
+						Children: []Widget{
+							CheckBox{
+								AssignTo: &a.kekMatureCheck,
+								Text:     "Mature / NSFW",
+								Checked:  true,
+							},
+						},
+					},
+				},
+			},
+
 			PushButton{
 				AssignTo:  &a.uploadButton,
 				Text:      "⬆ Upload",
@@ -281,9 +314,10 @@ func (a *App) onProviderChanged() {
 	isCatbox := provider == "catbox"
 	isSxcu := provider == "sxcu"
 	isImgchest := provider == "imgchest"
+	isKek := provider == "kek"
 
-	a.urlComposite.SetVisible(isCatbox)
-	if !isCatbox {
+	a.urlComposite.SetVisible(isCatbox || isKek)
+	if !isCatbox && !isKek {
 		a.urlEdit.SetText("")
 	}
 
@@ -311,8 +345,19 @@ func (a *App) onProviderChanged() {
 	}
 	a.postIDEdit.SetEnabled(isImgchest && !a.anonymousCheck.Checked())
 
-	a.descComposite.SetVisible(!isImgchest)
-	if isImgchest {
+	a.kekOptsComposite.SetVisible(isKek)
+	a.kekApiKeyEdit.SetEnabled(isKek)
+	a.kekMatureCheck.SetEnabled(isKek)
+	if isKek {
+		a.kekMatureCheck.SetChecked(true)
+	}
+
+	a.titleComposite.SetVisible(!isKek)
+	a.descComposite.SetVisible(!isImgchest && !isKek)
+	if isKek {
+		a.titleEdit.SetText("")
+	}
+	if isImgchest || isKek {
 		a.descEdit.SetText("")
 	}
 
@@ -507,6 +552,13 @@ func (a *App) startUpload() {
 				Anonymous: a.anonymousCheck.Checked(),
 			}
 			results, groupResult, errors, successCount = a.uploadImgchest(opts, postID, updateOutput)
+
+		case "kek":
+			urls := a.urlEdit.Text()
+			SetKekAPIKey(strings.TrimSpace(a.kekApiKeyEdit.Text()))
+			mature := a.kekMatureCheck.Checked()
+			results, errors = a.uploadKek(urls, mature, updateOutput)
+			successCount = len(results)
 		}
 
 		a.mainWindow.Synchronize(func() {
@@ -591,6 +643,91 @@ func (a *App) uploadCatbox(urls, title, desc string, createAlbum bool) ([]string
 	}
 
 	return results, albumResult, errors
+}
+
+func (a *App) uploadKek(urls string, mature bool, updateOutput func(string)) ([]string, []string) {
+	apiKey, err := getKekAPIKey()
+	if err != nil {
+		return nil, []string{err.Error()}
+	}
+
+	urlValues := make([]string, 0, 4)
+	if urls != "" {
+		for _, u := range strings.Split(urls, ",") {
+			u = strings.TrimSpace(u)
+			if u != "" {
+				urlValues = append(urlValues, u)
+			}
+		}
+	}
+
+	totalItems := len(a.selectedFiles) + len(urlValues)
+	results := make([]string, 0, totalItems)
+	errors := make([]string, 0, 4)
+
+	buildOutput := func() string {
+		var output strings.Builder
+		output.Grow(2048)
+		if len(errors) > 0 {
+			output.WriteString(fmt.Sprintf("Uploading... %d/%d (%d failed)\r\n\r\n", len(results), totalItems, len(errors)))
+		} else {
+			output.WriteString(fmt.Sprintf("Uploading... %d/%d\r\n\r\n", len(results), totalItems))
+		}
+		for _, r := range results {
+			output.WriteString(r)
+			output.WriteString("\r\n")
+		}
+		for _, e := range errors {
+			output.WriteString("Error: ")
+			output.WriteString(e)
+			output.WriteString("\r\n")
+		}
+		return output.String()
+	}
+
+	setMature := func(label string, resp *KekPostResponse) {
+		postID := resp.GetID()
+		if postID == "" {
+			errors = append(errors, fmt.Sprintf("%s maturity: missing post ID", label))
+			return
+		}
+		if err := setKekPostMature(postID, apiKey, mature); err != nil {
+			errors = append(errors, fmt.Sprintf("%s maturity: %v", label, err))
+		}
+	}
+
+	for _, filePath := range a.selectedFiles {
+		resp, err := uploadFileToKek(filePath, apiKey)
+		label := filepath.Base(filePath)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("%s: %v", label, err))
+		} else {
+			if postURL := resp.GetURL(); postURL != "" {
+				results = append(results, postURL)
+			} else {
+				results = append(results, resp.GetID())
+			}
+			setMature(label, resp)
+		}
+		updateOutput(buildOutput())
+	}
+
+	for _, u := range urlValues {
+		resp, err := uploadURLToKek(u, apiKey)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("URL %s: %v", u, err))
+		} else {
+			if postURL := resp.GetURL(); postURL != "" {
+				results = append(results, postURL)
+			} else {
+				results = append(results, resp.GetID())
+			}
+			setMature("URL "+u, resp)
+		}
+		updateOutput(buildOutput())
+	}
+
+	return results, errors
 }
 
 func (a *App) uploadSxcu(title, desc string, createCollection bool, opts SxcuCollectionOptions, updateOutput func(string)) ([]string, string, []string) {

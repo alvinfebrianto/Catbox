@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -20,18 +21,18 @@ import (
 )
 
 var (
-	user32                         = syscall.NewLazyDLL("user32.dll")
-	messageBoxW                    = user32.NewProc("MessageBoxW")
-	setProcessDPIAware             = user32.NewProc("SetProcessDPIAware")
-	setProcessDpiAwarenessContext  = user32.NewProc("SetProcessDpiAwarenessContext")
-	comdlg32                       = syscall.NewLazyDLL("comdlg32.dll")
-	getOpenFileNameW               = comdlg32.NewProc("GetOpenFileNameW")
-	dwmapi                         = syscall.NewLazyDLL("dwmapi.dll")
-	dwmSetWindowAttr               = dwmapi.NewProc("DwmSetWindowAttribute")
-	advapi32                       = syscall.NewLazyDLL("advapi32.dll")
-	regOpenKeyExW                  = advapi32.NewProc("RegOpenKeyExW")
-	regQueryValueExW               = advapi32.NewProc("RegQueryValueExW")
-	regCloseKey                    = advapi32.NewProc("RegCloseKey")
+	user32                        = syscall.NewLazyDLL("user32.dll")
+	messageBoxW                   = user32.NewProc("MessageBoxW")
+	setProcessDPIAware            = user32.NewProc("SetProcessDPIAware")
+	setProcessDpiAwarenessContext = user32.NewProc("SetProcessDpiAwarenessContext")
+	comdlg32                      = syscall.NewLazyDLL("comdlg32.dll")
+	getOpenFileNameW              = comdlg32.NewProc("GetOpenFileNameW")
+	dwmapi                        = syscall.NewLazyDLL("dwmapi.dll")
+	dwmSetWindowAttr              = dwmapi.NewProc("DwmSetWindowAttribute")
+	advapi32                      = syscall.NewLazyDLL("advapi32.dll")
+	regOpenKeyExW                 = advapi32.NewProc("RegOpenKeyExW")
+	regQueryValueExW              = advapi32.NewProc("RegQueryValueExW")
+	regCloseKey                   = advapi32.NewProc("RegCloseKey")
 )
 
 const (
@@ -134,9 +135,9 @@ const (
 )
 
 const (
-	sxcuFileUploadBucket   = "__sxcu_file_upload__"
-	sxcuCollectionBucket   = "__sxcu_collection__"
-	sxcuGlobalBucket       = "__sxcu_global__"
+	sxcuFileUploadBucket = "__sxcu_file_upload__"
+	sxcuCollectionBucket = "__sxcu_collection__"
+	sxcuGlobalBucket     = "__sxcu_global__"
 )
 
 var (
@@ -594,6 +595,240 @@ var httpTransport = &http.Transport{
 var httpClient = &http.Client{
 	Transport: httpTransport,
 	Timeout:   5 * time.Minute,
+}
+
+const (
+	kekAPIBaseURL = "https://kek.sh/api/v1"
+)
+
+type KekPostResponse struct {
+	ID       json.RawMessage `json:"id"`
+	URL      string          `json:"url"`
+	Link     string          `json:"link"`
+	Filename string          `json:"filename"`
+	Error    string          `json:"error"`
+	Message  string          `json:"message"`
+	Success  json.RawMessage `json:"success"`
+}
+
+func (r *KekPostResponse) GetURL() string {
+	if r.URL != "" {
+		return r.URL
+	}
+	if r.Link != "" {
+		return r.Link
+	}
+	if r.Filename != "" {
+		return "https://kek.sh/" + neturl.PathEscape(r.Filename)
+	}
+	return ""
+}
+
+func (r *KekPostResponse) GetID() string {
+	if len(r.ID) > 0 {
+		var idString string
+		if err := json.Unmarshal(r.ID, &idString); err == nil {
+			return idString
+		}
+		var idNumber int64
+		if err := json.Unmarshal(r.ID, &idNumber); err == nil {
+			return strconv.FormatInt(idNumber, 10)
+		}
+	}
+	postURL := r.GetURL()
+	if postURL == "" {
+		return ""
+	}
+	parsed, err := neturl.Parse(postURL)
+	if err != nil {
+		return ""
+	}
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(parts) == 0 {
+		return ""
+	}
+	return parts[len(parts)-1]
+}
+
+var customKekAPIKey string
+
+func SetKekAPIKey(apiKey string) {
+	customKekAPIKey = apiKey
+}
+
+func getKekAPIKey() (string, error) {
+	if customKekAPIKey != "" {
+		return customKekAPIKey, nil
+	}
+
+	exePath, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("failed to get executable path: %w", err)
+	}
+	exeDir := filepath.Dir(exePath)
+	configFile := filepath.Join(exeDir, "..", "kek.txt")
+
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		return "", fmt.Errorf("kek.txt not found. Create kek.txt next to the executable or enter API key in UI")
+	}
+
+	data = bytes.TrimSpace(data)
+	return string(data), nil
+}
+
+func decodeKekPostResponse(body []byte) (*KekPostResponse, error) {
+	trimmed := strings.TrimSpace(string(body))
+	if trimmed == "" {
+		return nil, fmt.Errorf("empty response")
+	}
+	if strings.HasPrefix(trimmed, "https://") || strings.HasPrefix(trimmed, "http://") {
+		return &KekPostResponse{URL: trimmed}, nil
+	}
+
+	var result KekPostResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %s", trimmed)
+	}
+	if result.Error != "" {
+		return nil, fmt.Errorf("API error: %s", result.Error)
+	}
+	if result.Message != "" && result.GetURL() == "" && result.GetID() == "" {
+		return nil, fmt.Errorf("API error: %s", result.Message)
+	}
+	if result.GetURL() == "" && result.GetID() == "" {
+		return nil, fmt.Errorf("missing post URL/id in response: %s", trimmed)
+	}
+	return &result, nil
+}
+
+func uploadFileToKek(filePath, apiKey string) (*KekPostResponse, error) {
+	pr, pw := io.Pipe()
+	writer := multipart.NewWriter(pw)
+	contentType := writer.FormDataContentType()
+
+	errCh := make(chan error, 1)
+	go func() {
+		defer pw.Close()
+		defer writer.Close()
+
+		file, err := os.Open(filePath)
+		if err != nil {
+			pw.CloseWithError(err)
+			errCh <- err
+			return
+		}
+		defer file.Close()
+
+		part, err := writer.CreateFormFile("file", filepath.Base(filePath))
+		if err != nil {
+			pw.CloseWithError(err)
+			errCh <- err
+			return
+		}
+
+		bufp := copyBufPool.Get().(*[]byte)
+		_, err = io.CopyBuffer(part, file, *bufp)
+		copyBufPool.Put(bufp)
+		if err != nil {
+			pw.CloseWithError(err)
+			errCh <- err
+			return
+		}
+		errCh <- nil
+	}()
+
+	req, err := http.NewRequest("POST", kekAPIBaseURL+"/posts", pr)
+	if err != nil {
+		pr.Close()
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("x-kek-auth", apiKey)
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if pipeErr := <-errCh; pipeErr != nil {
+		return nil, fmt.Errorf("failed to write multipart: %w", pipeErr)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("API error: status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	return decodeKekPostResponse(body)
+}
+
+func uploadURLToKek(targetURL, apiKey string) (*KekPostResponse, error) {
+	parsed, err := neturl.ParseRequestURI(targetURL)
+	if err != nil || parsed == nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return nil, fmt.Errorf("invalid URL")
+	}
+
+	form := neturl.Values{}
+	form.Set("url", targetURL)
+	req, err := http.NewRequest("POST", kekAPIBaseURL+"/posts", strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("x-kek-auth", apiKey)
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("API error: status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	return decodeKekPostResponse(body)
+}
+
+func setKekPostMature(postID, apiKey string, mature bool) error {
+	if strings.TrimSpace(postID) == "" {
+		return fmt.Errorf("post ID is required")
+	}
+	payload, err := json.Marshal(map[string]bool{"value": mature})
+	if err != nil {
+		return fmt.Errorf("failed to marshal maturity payload: %w", err)
+	}
+
+	req, err := http.NewRequest("PUT", kekAPIBaseURL+"/posts/"+neturl.PathEscape(postID)+"/mature", bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-kek-auth", apiKey)
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8192))
+	if err != nil {
+		return fmt.Errorf("failed to read response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("API error: status=%d body=%s", resp.StatusCode, string(body))
+	}
+	return nil
 }
 
 func uploadFileToCatbox(filePath string) (string, error) {
@@ -1199,8 +1434,8 @@ type ImgchestUploadOptions struct {
 }
 
 const (
-	imgchestMaxFileSize         = 30 * 1024 * 1024 // 30MB
-	imgchestAllowedExtensions   = ".jpg,.jpeg,.png,.gif,.webp,.mp4"
+	imgchestMaxFileSize       = 30 * 1024 * 1024 // 30MB
+	imgchestAllowedExtensions = ".jpg,.jpeg,.png,.gif,.webp,.mp4"
 )
 
 var imgchestAllowedExtMap = map[string]bool{

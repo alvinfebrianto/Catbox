@@ -9,9 +9,9 @@ import (
 )
 
 var (
-	uxtheme         = syscall.NewLazyDLL("uxtheme.dll")
-	setWindowThemeW = uxtheme.NewProc("SetWindowTheme")
-	gdi32           = syscall.NewLazyDLL("gdi32.dll")
+	uxtheme          = syscall.NewLazyDLL("uxtheme.dll")
+	setWindowThemeW  = uxtheme.NewProc("SetWindowTheme")
+	gdi32            = syscall.NewLazyDLL("gdi32.dll")
 	createSolidBrush = gdi32.NewProc("CreateSolidBrush")
 )
 
@@ -73,15 +73,18 @@ func ApplyDarkTheme(a *App) {
 	a.mainWindow.SetBackground(windowBrush)
 
 	applyDarkToComposite(a.urlComposite)
+	applyDarkToComposite(a.titleComposite)
 	applyDarkToComposite(a.catboxOptsComposite)
 	applyDarkToComposite(a.sxcuOptsComposite)
 	applyDarkToComposite(a.imgchestOptsComposite)
+	applyDarkToComposite(a.kekOptsComposite)
 
 	applyDarkToLineEdit(a.urlEdit)
 	applyDarkToLineEdit(a.titleEdit)
 	applyDarkToLineEdit(a.descEdit)
 	applyDarkToLineEdit(a.postIDEdit)
 	applyDarkToLineEdit(a.imgchestTokenEdit)
+	applyDarkToLineEdit(a.kekApiKeyEdit)
 
 	applyDarkToTextEdit(a.outputEdit)
 	applyDarkToListBox(a.fileListBox)
@@ -91,6 +94,7 @@ func ApplyDarkTheme(a *App) {
 	applyDarkToCheckBox(a.sxcuPrivateCheck)
 	applyDarkToCheckBox(a.anonymousCheck)
 	applyDarkToCheckBox(a.nsfwCheck)
+	applyDarkToCheckBox(a.kekMatureCheck)
 	applyDarkToComboBox(a.privacyCombo)
 
 	applyDarkToButton(a.uploadButton)
@@ -181,6 +185,9 @@ func subclassComposites(a *App) {
 	if a.urlComposite != nil {
 		installDarkThemeWndProcFor(a.urlComposite.Handle())
 	}
+	if a.titleComposite != nil {
+		installDarkThemeWndProcFor(a.titleComposite.Handle())
+	}
 	if a.catboxOptsComposite != nil {
 		installDarkThemeWndProcFor(a.catboxOptsComposite.Handle())
 	}
@@ -189,6 +196,9 @@ func subclassComposites(a *App) {
 	}
 	if a.imgchestOptsComposite != nil {
 		installDarkThemeWndProcFor(a.imgchestOptsComposite.Handle())
+	}
+	if a.kekOptsComposite != nil {
+		installDarkThemeWndProcFor(a.kekOptsComposite.Handle())
 	}
 }
 
