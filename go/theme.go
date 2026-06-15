@@ -98,6 +98,7 @@ func ApplyDarkTheme(a *App) {
 	applyDarkToComboBox(a.privacyCombo)
 
 	applyDarkToButton(a.uploadButton)
+	applyDarkToButton(a.copyButton)
 
 	applyDarkToLabels(a.mainWindow)
 	subclassComposites(a)

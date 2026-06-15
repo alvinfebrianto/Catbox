@@ -35,8 +35,10 @@ type App struct {
 	imgchestTokenEdit *walk.LineEdit
 	outputEdit        *walk.TextEdit
 	uploadButton      *walk.PushButton
+	copyButton        *walk.PushButton
 	selectedFiles     []string
 	uploadCompleted   bool
+	copiedLinks       []string
 
 	urlComposite          *walk.Composite
 	catboxOptsComposite   *walk.Composite
@@ -284,6 +286,14 @@ func (a *App) Run() error {
 				MinSize:   Size{Height: 32},
 			},
 
+			PushButton{
+				AssignTo:  &a.copyButton,
+				Text:      "⧉ Copy Links",
+				OnClicked: a.onCopyLinks,
+				MinSize:   Size{Height: 32},
+				Visible:   false,
+			},
+
 			TextEdit{
 				AssignTo: &a.outputEdit,
 				ReadOnly: true,
@@ -406,6 +416,8 @@ func (a *App) onSelectFiles() {
 		a.uploadCompleted = false
 	}
 
+	a.hideCopyButton()
+
 	dlg := new(walk.FileDialog)
 	dlg.Title = "Select Files"
 	dlg.Filter = "Image files (*.jpg;*.jpeg;*.png;*.gif;*.bmp;*.ico;*.tif;*.tiff;*.webp)|*.jpg;*.jpeg;*.png;*.gif;*.bmp;*.ico;*.tif;*.tiff;*.webp|Video files (*.webm)|*.webm|All files (*.*)|*.*"
@@ -467,6 +479,25 @@ func (a *App) onClearAll() {
 	a.selectedFiles = a.selectedFiles[:0]
 	a.fileListModel.items = a.fileListModel.items[:0]
 	a.fileListModel.PublishItemsReset()
+	a.hideCopyButton()
+}
+
+func (a *App) hideCopyButton() {
+	a.copiedLinks = nil
+	if a.copyButton != nil {
+		a.copyButton.SetVisible(false)
+	}
+}
+
+func (a *App) onCopyLinks() {
+	if len(a.copiedLinks) == 0 {
+		return
+	}
+	if err := walk.Clipboard().SetText(strings.Join(a.copiedLinks, "\r\n")); err != nil {
+		showError(fmt.Sprintf("Failed to copy links: %v", err))
+		return
+	}
+	a.outputEdit.AppendText("\r\n✓ Copied!\r\n")
 }
 
 func (a *App) onUpload() {
@@ -505,6 +536,7 @@ func (a *App) onUpload() {
 }
 
 func (a *App) startUpload() {
+	a.hideCopyButton()
 	a.outputEdit.SetText("Starting upload...\r\n")
 
 	go func() {
@@ -595,6 +627,8 @@ func (a *App) startUpload() {
 
 			if successCount > 0 {
 				a.uploadCompleted = true
+				a.copiedLinks = append([]string(nil), results...)
+				a.copyButton.SetVisible(true)
 			}
 		})
 	}()
