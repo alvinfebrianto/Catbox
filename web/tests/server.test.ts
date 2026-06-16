@@ -15,6 +15,7 @@ import {
   handleSxcuFiles,
   handleImgchestPost,
   handleImgchestAdd,
+  handleKekPost,
   MAX_IMGCHEST_IMAGES_PER_REQUEST,
 } from '../src/server';
 import { RateLimitData } from '../src/types';
@@ -391,6 +392,104 @@ describe('Imgchest upload handlers', () => {
 
     const response = await handleImgchestPost(req as unknown as Request);
 
+    expect(response.status).toBe(400);
+  });
+});
+
+describe('Kek upload handler (node host)', () => {
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    delete process.env.KEK_API_KEY;
+  });
+
+  test('proxies url upload to kek /posts and follows up with mature PUT', async () => {
+    process.env.KEK_API_KEY = 'env-key';
+    const fetchMock = vi.fn((_url, _init) => {
+      if (typeof _url === 'string' && _url.endsWith('/mature')) {
+        return Promise.resolve(createMockResponse('', { status: 200 }) as unknown as Response);
+      }
+      return Promise.resolve(
+        createMockResponse({ id: 'kek-1', url: 'https://kek.sh/i/kek-1' }) as unknown as Response,
+      );
+    });
+    setMockFetch(fetchMock);
+
+    const formData = createMockFormData([['url', 'https://example.com/cat.png']]);
+    const req = createMockRequest('http://localhost:3000/upload/kek/posts', { formData });
+
+    const response = await handleKekPost(req as unknown as Request);
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    const [firstUrl, firstInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(firstUrl).toBe('https://kek.sh/api/v1/posts');
+    expect((firstInit.headers as Record<string, string>)['x-kek-auth']).toBe('env-key');
+
+    const [matureUrl] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(matureUrl).toBe('https://kek.sh/api/v1/posts/kek-1/mature');
+  });
+
+  test('uses X-Kek-Auth header in preference to env key', async () => {
+    process.env.KEK_API_KEY = 'env-key';
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        createMockResponse({ id: 'kek-2', url: 'https://kek.sh/i/kek-2' }) as unknown as Response,
+      ),
+    );
+    setMockFetch(fetchMock);
+
+    const formData = createMockFormData([['url', 'https://example.com/cat.png']]);
+    const req = createMockRequest('http://localhost:3000/upload/kek/posts', {
+      formData,
+      headers: { 'X-Kek-Auth': 'header-key' },
+    });
+
+    await handleKekPost(req as unknown as Request);
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect((init.headers as Record<string, string>)['x-kek-auth']).toBe('header-key');
+  });
+
+  test('skips mature PUT when mature flag is false', async () => {
+    process.env.KEK_API_KEY = 'env-key';
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        createMockResponse({ id: 'kek-3', url: 'https://kek.sh/i/kek-3' }) as unknown as Response,
+      ),
+    );
+    setMockFetch(fetchMock);
+
+    const formData = createMockFormData([
+      ['url', 'https://example.com/cat.png'],
+      ['mature', 'false'],
+    ]);
+    const req = createMockRequest('http://localhost:3000/upload/kek/posts', { formData });
+
+    await handleKekPost(req as unknown as Request);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test('returns 400 when both file and url are provided', async () => {
+    process.env.KEK_API_KEY = 'env-key';
+    setMockFetch(vi.fn());
+
+    const realFormData = new FormData();
+    realFormData.append('url', 'https://example.com/cat.png');
+    realFormData.append('file', new File(['cat'], 'cat.png', { type: 'image/png' }));
+    const req = createMockRequest('http://localhost:3000/upload/kek/posts', { formData: realFormData });
+
+    const response = await handleKekPost(req as unknown as Request);
+    expect(response.status).toBe(400);
+  });
+
+  test('returns 400 when no api key is configured', async () => {
+    setMockFetch(vi.fn());
+
+    const formData = createMockFormData([['url', 'https://example.com/cat.png']]);
+    const req = createMockRequest('http://localhost:3000/upload/kek/posts', { formData });
+
+    const response = await handleKekPost(req as unknown as Request);
     expect(response.status).toBe(400);
   });
 });

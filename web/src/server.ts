@@ -21,6 +21,7 @@ import {
   validateKekFiles,
 } from './types';
 import { CatboxProviderInputError, readCatboxUploadInput, uploadToCatbox } from './providers/catbox';
+import { KekProviderInputError, readKekUploadInput, uploadToKek } from './providers/kek';
 
 const PORT = 3000;
 const TEMP_DIR = 'C:\\Users\\lenovo\\AppData\\Local\\Temp';
@@ -387,40 +388,22 @@ async function handleCatboxUpload(req: Request): Promise<Response> {
 }
 
 async function handleKekPost(req: Request): Promise<Response> {
-  const apiKey = req.headers.get('X-Kek-Auth')?.trim() || getKekKey();
-  if (!apiKey) {
-    return new Response(JSON.stringify({
-      error: 'kek API key not found. Provide a custom API key in the UI or set KEK_API_KEY environment variable in .env file'
-    }), {
+  const headerApiKey = req.headers.get('X-Kek-Auth')?.trim() || undefined;
+
+  let input;
+  try {
+    input = readKekUploadInput(await req.formData(), getKekKey() ?? undefined, headerApiKey);
+  } catch (error) {
+    const status = error instanceof KekProviderInputError ? 400 : 500;
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return new Response(JSON.stringify({ error: message }), {
       headers: { 'Content-Type': 'application/json' },
-      status: 401,
+      status,
     });
   }
 
-  const formData = await req.formData();
-  const files = formData.getAll('file') as File[];
-  const url = formData.get('url') as string | null;
-  const mature = formData.get('mature') as string | null;
-
-  if (files.length > 0 && url) {
-    return new Response(JSON.stringify({ error: 'Cannot upload both files and URLs in the same request' }), {
-      headers: { 'Content-Type': 'application/json' },
-      status: 400,
-    });
-  }
-
-  const isUrlUpload = !!url;
-
-  if (isUrlUpload) {
-    try {
-      new URL(url);
-    } catch {
-      return new Response(JSON.stringify({ error: 'Invalid URL' }), {
-        headers: { 'Content-Type': 'application/json' },
-        status: 400,
-      });
-    }
-  } else {
+  if (input.files && input.files.length > 0) {
+    const files = input.files.filter((f): f is File => f instanceof File);
     const validation = validateKekFiles(files);
     if (!validation.ok) {
       return new Response(JSON.stringify({ error: validation.error }), {
@@ -430,104 +413,23 @@ async function handleKekPost(req: Request): Promise<Response> {
     }
   }
 
-  const kekFormData = new FormData();
-  if (isUrlUpload) {
-    kekFormData.append('url', url!);
-  } else {
-    for (const file of files) {
-      kekFormData.append('file', file);
-    }
-  }
+  try {
+    const result = await uploadToKek(input);
 
-  const shouldSetMature = mature !== 'false';
-
-  let lastError: Error | null = null;
-
-  for (let attempt = 0; attempt <= DEFAULT_RETRY_CONFIG.maxRetries; attempt++) {
-    try {
-      const response = await fetch('https://kek.sh/api/v1/posts', {
-        method: 'POST',
-        body: kekFormData,
-        headers: {
-          'x-kek-auth': apiKey,
-          'User-Agent': 'CatboxUploader/2.0',
-        },
-      });
-
-      const text = await response.text();
-
-      if (response.ok) {
-        let data: Record<string, unknown>;
-        try {
-          data = JSON.parse(text);
-        } catch {
-          return new Response(text, {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          });
-        }
-
-        const postId = data.id;
-        if (postId != null && shouldSetMature) {
-          try {
-            const matureResp = await fetch(`https://kek.sh/api/v1/posts/${postId}/mature`, {
-              method: 'PUT',
-              headers: {
-                'x-kek-auth': apiKey,
-                'Content-Type': 'application/json',
-                'User-Agent': 'CatboxUploader/2.0',
-              },
-              body: JSON.stringify({ value: true }),
-            });
-
-            if (!matureResp.ok && DEBUG) {
-              console.warn(`[kek] Failed to set mature for post ${postId}: ${matureResp.status}`);
-            }
-          } catch (matureError) {
-            if (DEBUG) {
-              console.warn(`[kek] Error setting mature for post ${postId}:`, matureError);
-            }
-          }
-        }
-
-        return new Response(text, {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-
-      if (response.status === 429 && attempt < DEFAULT_RETRY_CONFIG.maxRetries) {
-        if (DEBUG) {
-          console.log(`[kek] Rate limited, attempt ${attempt + 1}`);
-        }
-        const waitMs = calculateExponentialBackoff(attempt);
-        await new Promise(resolve => setTimeout(resolve, waitMs));
-        continue;
-      }
-
-      return new Response(text, {
-        status: response.status,
+    return new Response(
+      typeof result.body === 'string' ? result.body : JSON.stringify(result.body),
+      {
         headers: { 'Content-Type': 'application/json' },
-      });
-
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
-      if (DEBUG) {
-        console.error(`[kek] Error on attempt ${attempt + 1}:`, lastError.message);
-      }
-
-      if (attempt < DEFAULT_RETRY_CONFIG.maxRetries) {
-        const waitMs = calculateExponentialBackoff(attempt);
-        await new Promise(resolve => setTimeout(resolve, waitMs));
-        continue;
-      }
-    }
+        status: result.status >= 200 && result.status < 300 ? 200 : result.status,
+      },
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return new Response(JSON.stringify({ error: message }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
-
-  return new Response(JSON.stringify({ error: lastError?.message || 'Unknown error' }), {
-    status: 500,
-    headers: { 'Content-Type': 'application/json' },
-  });
 }
 
 async function handleSxcuCollections(req: Request): Promise<Response> {
