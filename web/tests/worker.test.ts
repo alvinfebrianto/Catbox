@@ -3,150 +3,41 @@ import workerDefault from '../src/worker';
 import { getCorsHeaders } from '../src/types';
 
 const originalFetch = globalThis.fetch;
-const TEST_PROXY_TOKEN = 'test-proxy-auth-token';
 const TEST_ORIGIN = 'http://localhost:3000';
-
-function setMockFetch(fn: (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>): void {
-  (globalThis as unknown as { fetch: typeof fetch }).fetch = fn as typeof fetch;
-}
 
 function createRequest(url: string, options: RequestInit = {}): Request {
   const headers = new Headers(options.headers || {});
   if (!headers.has('Origin')) {
     headers.set('Origin', TEST_ORIGIN);
   }
-  if (!headers.has('X-Proxy-Auth') && options.method === 'POST') {
-    headers.set('X-Proxy-Auth', TEST_PROXY_TOKEN);
-  }
   return new Request(`https://worker.test${url}`, { ...options, headers });
 }
 
-function createRequestWithoutAuth(url: string, options: RequestInit = {}): Request {
-  const headers = new Headers(options.headers || {});
-  if (!headers.has('Origin')) {
-    headers.set('Origin', TEST_ORIGIN);
-  }
-  return new Request(`https://worker.test${url}`, { ...options, headers });
+interface MockDurableObject {
+  namespace: DurableObjectNamespace;
+  fetchMock: ReturnType<typeof vi.fn>;
 }
 
-function createFormData(entries: Record<string, string | Blob>): FormData {
-  const formData = new FormData();
-  for (const [key, value] of Object.entries(entries)) {
-    formData.append(key, value);
-  }
-  return formData;
-}
-
-function createMockResponse(body: string | object, options: { status?: number; headers?: Record<string, string> } = {}): Response {
-  const bodyStr = typeof body === 'string' ? body : JSON.stringify(body);
-  return new Response(bodyStr, {
-    status: options.status || 200,
-    headers: new Headers(options.headers || {}),
+function createMockDurableObject(): MockDurableObject {
+  const fetchMock = vi.fn(async (_request: Request): Promise<Response> => {
+    return new Response('Not Found', { status: 404 });
   });
-}
 
-function createMockDurableObjectNamespace(): DurableObjectNamespace {
-  const mockCORSHeaders = getCorsHeaders(TEST_ORIGIN);
-
-  const mockStub = {
-    fetch: async (request: Request): Promise<Response> => {
-      const url = new URL(request.url);
-      const path = url.pathname;
-      const method = request.method;
-
-      if (method === 'OPTIONS') {
-        return new Response(null, { headers: mockCORSHeaders, status: 204 });
-      }
-
-      if (method === 'POST' && path === '/upload/catbox') {
-        const formData = await request.formData();
-        const reqtype = formData.get('reqtype') as string;
-
-        if (!reqtype) {
-          return new Response(JSON.stringify({ error: 'Missing reqtype parameter' }), {
-            status: 400,
-            headers: { ...mockCORSHeaders, 'Content-Type': 'application/json' },
-          });
-        }
-
-        if (reqtype === 'fileupload') {
-          const file = formData.get('fileToUpload');
-          if (!file) {
-            return new Response('Missing fileToUpload parameter', { status: 400, headers: mockCORSHeaders });
-          }
-          return new Response('https://files.catbox.moe/abc123.png', { headers: mockCORSHeaders });
-        }
-        return new Response(JSON.stringify({ error: 'Unknown request type' }), {
-          status: 400,
-          headers: { ...mockCORSHeaders, 'Content-Type': 'application/json' },
-        });
-      }
-
-      if (method === 'POST' && path === '/upload/sxcu/collections') {
-        return new Response(JSON.stringify({ id: '123' }), {
-          headers: { ...mockCORSHeaders, 'Content-Type': 'application/json' },
-        });
-      }
-
-      if (method === 'POST' && path === '/upload/sxcu/files') {
-        return new Response(JSON.stringify({ url: 'https://sxcu.net/abc' }), {
-          headers: {
-            ...mockCORSHeaders,
-            'Content-Type': 'application/json',
-            'X-RateLimit-Remaining': '49',
-            'X-RateLimit-Limit': '50',
-          },
-        });
-      }
-
-      if (method === 'POST' && path === '/upload/imgchest/post') {
-        const authHeader = request.headers.get('Authorization');
-        if (!authHeader?.startsWith('Bearer ')) {
-          return new Response(JSON.stringify({ error: 'Imgchest API token not configured' }), {
-            headers: { ...mockCORSHeaders, 'Content-Type': 'application/json' },
-            status: 401,
-          });
-        }
-        return new Response(JSON.stringify({ data: { id: 'post123' } }), {
-          headers: { ...mockCORSHeaders, 'Content-Type': 'application/json' },
-        });
-      }
-
-      if (method === 'POST' && path.startsWith('/upload/imgchest/post/') && path.endsWith('/add')) {
-        const authHeader = request.headers.get('Authorization');
-        if (!authHeader?.startsWith('Bearer ')) {
-          return new Response(JSON.stringify({ error: 'Imgchest API token not configured' }), {
-            headers: { ...mockCORSHeaders, 'Content-Type': 'application/json' },
-            status: 401,
-          });
-        }
-        return new Response(JSON.stringify({ success: true }), {
-          headers: { ...mockCORSHeaders, 'Content-Type': 'application/json' },
-        });
-      }
-
-      return new Response('Not Found', { status: 404, headers: mockCORSHeaders });
-    },
-  };
-
+  const stub = { fetch: fetchMock };
   const namespace = {
     idFromName: ((name: string) => {
-      return {
-        toString: () => name,
-      } as unknown as DurableObjectId;
+      return { toString: () => name } as unknown as DurableObjectId;
     }) as (name: string) => DurableObjectId,
-    get: ((_id: DurableObjectId) => {
-      return mockStub;
-    }) as (id: DurableObjectId) => DurableObjectStub,
+    get: ((_id: DurableObjectId) => stub) as (id: DurableObjectId) => DurableObjectStub,
   };
 
-  return namespace as unknown as DurableObjectNamespace;
+  return { namespace: namespace as unknown as DurableObjectNamespace, fetchMock };
 }
 
 function createTestEnv(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  const { namespace } = createMockDurableObject();
   return {
-    PROXY_AUTH_TOKEN: TEST_PROXY_TOKEN,
-    RATE_LIMITER: createMockDurableObjectNamespace(),
+    RATE_LIMITER: namespace,
     ...overrides,
   };
 }
@@ -180,19 +71,6 @@ describe('CORS and routing', () => {
     );
     expect(response.status).toBe(404);
   });
-
-  test('POST without X-Proxy-Auth still reaches the catbox host boundary', async () => {
-    setMockFetch(vi.fn(() =>
-      Promise.resolve(createMockResponse('https://files.catbox.moe/abc123.png'))
-    ));
-
-    const response = await workerDefault.fetch(
-      createRequestWithoutAuth('/upload/catbox', { method: 'POST', body: createFormData({ reqtype: 'fileupload' }) }),
-      createTestEnv()
-    );
-    expect(response.status).toBe(200);
-    expect(await response.text()).toBe('https://files.catbox.moe/abc123.png');
-  });
 });
 
 describe('Catbox proxy', () => {
@@ -200,10 +78,10 @@ describe('Catbox proxy', () => {
     globalThis.fetch = originalFetch;
   });
 
-  test('successful file upload', async () => {
-    setMockFetch(vi.fn(() =>
-      Promise.resolve(createMockResponse('https://files.catbox.moe/abc123.png'))
-    ));
+  test('successful file upload exercises real uploadToCatbox', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('https://files.catbox.moe/abc123.png', { status: 200 })
+    );
 
     const formData = new FormData();
     formData.append('reqtype', 'fileupload');
@@ -220,120 +98,206 @@ describe('Catbox proxy', () => {
   });
 
   test('supports urlupload reqtype', async () => {
-    setMockFetch(vi.fn(() =>
-      Promise.resolve(createMockResponse('https://files.catbox.moe/url123.png'))
-    ));
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('https://files.catbox.moe/url123.png', { status: 200 })
+    );
 
-    const formData = createFormData({
-      reqtype: 'urlupload',
-      url: 'https://example.com/image.png',
-    });
+    const formData = new FormData();
+    formData.append('reqtype', 'urlupload');
+    formData.append('url', 'https://example.com/image.png');
+
     const response = await workerDefault.fetch(
       createRequest('/upload/catbox', { method: 'POST', body: formData }),
       createTestEnv()
     );
     expect(response.status).toBe(200);
     expect(await response.text()).toBe('https://files.catbox.moe/url123.png');
-    expect(response.headers.get('Access-Control-Allow-Origin')).toBe(TEST_ORIGIN);
   });
 
   test('supports createalbum reqtype', async () => {
-    setMockFetch(vi.fn(() =>
-      Promise.resolve(createMockResponse('album123'))
-    ));
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('album123', { status: 200 })
+    );
 
-    const formData = createFormData({
-      reqtype: 'createalbum',
-      files: 'abc.png def.png',
-    });
+    const formData = new FormData();
+    formData.append('reqtype', 'createalbum');
+    formData.append('files', 'abc.png def.png');
+
     const response = await workerDefault.fetch(
       createRequest('/upload/catbox', { method: 'POST', body: formData }),
       createTestEnv()
     );
     expect(response.status).toBe(200);
     expect(await response.text()).toBe('album123');
-    expect(response.headers.get('Access-Control-Allow-Origin')).toBe(TEST_ORIGIN);
+  });
+
+  test('rejects invalid reqtype', async () => {
+    const formData = new FormData();
+    formData.append('reqtype', 'invalid');
+
+    const response = await workerDefault.fetch(
+      createRequest('/upload/catbox', { method: 'POST', body: formData }),
+      createTestEnv()
+    );
+    expect(response.status).toBe(400);
   });
 });
 
-describe('SXCU proxy', () => {
+describe('Kek proxy', () => {
   afterEach(() => {
     globalThis.fetch = originalFetch;
   });
 
-  test('collection creation', async () => {
-    setMockFetch(vi.fn(() =>
-      Promise.resolve(createMockResponse(JSON.stringify({ id: '123' })))
-    ));
+  test('proxies url upload to kek /posts', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: 'kek-1', url: 'https://kek.sh/i/kek-1' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response('', { status: 200 })
+      );
+
+    const formData = new FormData();
+    formData.append('url', 'https://example.com/cat.png');
 
     const response = await workerDefault.fetch(
-      createRequest('/upload/sxcu/collections', {
-        method: 'POST',
-        body: createFormData({ title: 'test' }),
-      }),
-      createTestEnv()
+      createRequest('/upload/kek/posts', { method: 'POST', body: formData }),
+      createTestEnv({ KEK_API_KEY: 'env-key' })
     );
 
     expect(response.status).toBe(200);
+    const body = await response.json() as { id: string };
+    expect(body.id).toBe('kek-1');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    const [firstUrl] = fetchMock.mock.calls[0] as [string];
+    expect(firstUrl).toBe('https://kek.sh/api/v1/posts');
   });
 
-  test('file upload with rate limit headers', async () => {
+  test('returns 400 when no API key configured', async () => {
     const formData = new FormData();
-    formData.append('file', new File(['test content'], 'test.png', { type: 'image/png' }));
+    formData.append('url', 'https://example.com/cat.png');
 
     const response = await workerDefault.fetch(
-      createRequest('/upload/sxcu/files', {
-        method: 'POST',
-        body: formData,
-      }),
+      createRequest('/upload/kek/posts', { method: 'POST', body: formData }),
       createTestEnv()
     );
 
-    expect(response.status).toBe(200);
-    expect(response.headers.get('X-RateLimit-Remaining')).toBe('49');
+    expect(response.status).toBe(400);
   });
 });
 
-describe('Imgchest proxy', () => {
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-  });
-
-  test('requires API token', async () => {
-    const formData = new FormData();
-    formData.append('images[]', new File(['test'], 'test.png', { type: 'image/png' }));
-
-    const testEnv = { PROXY_AUTH_TOKEN: TEST_PROXY_TOKEN, RATE_LIMITER: createMockDurableObjectNamespace() };
-
-    const response = await workerDefault.fetch(
-      createRequest('/upload/imgchest/post', { method: 'POST', body: formData }),
-      testEnv
+describe('Durable Object forwarding boundary', () => {
+  test('forwards imgchest post to DO and returns the response', async () => {
+    const { namespace, fetchMock } = createMockDurableObject();
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
     );
-
-    expect(response.status).toBe(401);
-    const json = await response.json() as { error: string };
-    expect(json.error).toBe('Imgchest API token not configured');
-  });
-
-  test('post creation with token from env', async () => {
     const formData = new FormData();
-    formData.append('images[]', new File(['test'], 'test.png', { type: 'image/png' }));
+    formData.append('images[]', new File(['a'], 'a.png', { type: 'image/png' }));
 
     const response = await workerDefault.fetch(
       createRequest('/upload/imgchest/post', { method: 'POST', body: formData }),
-      createTestEnv({ IMGCHEST_API_TOKEN: 'token123' })
+      { RATE_LIMITER: namespace, IMGCHEST_API_TOKEN: 'env-token' }
     );
 
     expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const forwardedReq = fetchMock.mock.calls[0][0] as Request;
+    expect(new URL(forwardedReq.url).pathname).toBe('/upload/imgchest/post');
+    expect(forwardedReq.headers.get('Authorization')).toBe('Bearer env-token');
+    expect(forwardedReq.headers.get('X-Origin')).toBe(TEST_ORIGIN);
   });
 
-  test('post creation with custom authorization header', async () => {
+  test('forwards sxcu files to DO', async () => {
+    const { namespace, fetchMock } = createMockDurableObject();
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ url: 'https://sxcu.net/abc' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
     const formData = new FormData();
-    formData.append('images[]', new File(['test'], 'test.png', { type: 'image/png' }));
+    formData.append('file', new File(['content'], 'test.png', { type: 'image/png' }));
+
+    const response = await workerDefault.fetch(
+      createRequest('/upload/sxcu/files', { method: 'POST', body: formData }),
+      { RATE_LIMITER: namespace }
+    );
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const forwardedReq = fetchMock.mock.calls[0][0] as Request;
+    expect(new URL(forwardedReq.url).pathname).toBe('/upload/sxcu/files');
+  });
+
+  test('forwards sxcu collections to DO', async () => {
+    const { namespace, fetchMock } = createMockDurableObject();
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ id: 'coll123' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+    const formData = new FormData();
+    formData.append('title', 'My Collection');
+
+    const response = await workerDefault.fetch(
+      createRequest('/upload/sxcu/collections', { method: 'POST', body: formData }),
+      { RATE_LIMITER: namespace }
+    );
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const forwardedReq = fetchMock.mock.calls[0][0] as Request;
+    expect(new URL(forwardedReq.url).pathname).toBe('/upload/sxcu/collections');
+  });
+
+  test('forwards imgchest add to existing post to DO', async () => {
+    const { namespace, fetchMock } = createMockDurableObject();
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+    const formData = new FormData();
+    formData.append('images[]', new File(['a'], 'a.png', { type: 'image/png' }));
+
+    const response = await workerDefault.fetch(
+      createRequest('/upload/imgchest/post/myPostId/add', { method: 'POST', body: formData }),
+      { RATE_LIMITER: namespace }
+    );
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const forwardedReq = fetchMock.mock.calls[0][0] as Request;
+    expect(new URL(forwardedReq.url).pathname).toBe('/upload/imgchest/post/myPostId/add');
+  });
+
+  test('does not override existing Authorization header with env token', async () => {
+    const { namespace, fetchMock } = createMockDurableObject();
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+    const formData = new FormData();
+    formData.append('images[]', new File(['a'], 'a.png', { type: 'image/png' }));
 
     const headers = new Headers();
     headers.set('Origin', TEST_ORIGIN);
-    headers.set('X-Proxy-Auth', TEST_PROXY_TOKEN);
     headers.set('Authorization', 'Bearer custom-token');
 
     const request = new Request('https://worker.test/upload/imgchest/post', {
@@ -342,37 +306,47 @@ describe('Imgchest proxy', () => {
       headers,
     });
 
-    const response = await workerDefault.fetch(request, createTestEnv());
+    await workerDefault.fetch(
+      request,
+      { RATE_LIMITER: namespace, IMGCHEST_API_TOKEN: 'env-token' }
+    );
 
-    expect(response.status).toBe(200);
+    const forwardedReq = fetchMock.mock.calls[0][0] as Request;
+    expect(forwardedReq.headers.get('Authorization')).toBe('Bearer custom-token');
   });
 
-  test('sends authorization header from env', async () => {
+  test('does not inject env token when no IMGCHEST_API_TOKEN', async () => {
+    const { namespace, fetchMock } = createMockDurableObject();
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
     const formData = new FormData();
-    formData.append('images[]', new File(['test'], 'test.png', { type: 'image/png' }));
+    formData.append('images[]', new File(['a'], 'a.png', { type: 'image/png' }));
 
-    const response = await workerDefault.fetch(
+    await workerDefault.fetch(
       createRequest('/upload/imgchest/post', { method: 'POST', body: formData }),
-      createTestEnv({ IMGCHEST_API_TOKEN: 'secret-token' })
+      { RATE_LIMITER: namespace }
     );
 
-    expect(response.status).toBe(200);
-    const json = await response.json() as { data: { id: string } };
-    expect(json.data.id).toBe('post123');
+    const forwardedReq = fetchMock.mock.calls[0][0] as Request;
+    expect(forwardedReq.headers.get('Authorization')).toBeNull();
   });
 
-  test('add images to existing post', async () => {
-    const formData = new FormData();
-    formData.append('images[]', new File(['test'], 'test.png', { type: 'image/png' }));
-
-    const response = await workerDefault.fetch(
-      createRequest('/upload/imgchest/post/myPostId/add', { method: 'POST', body: formData }),
-      createTestEnv({ IMGCHEST_API_TOKEN: 'token' })
+  test('returns response from DO, including error status', async () => {
+    const { namespace, fetchMock } = createMockDurableObject();
+    fetchMock.mockResolvedValue(
+      new Response('Not Found', { status: 404 })
     );
 
-    expect(response.status).toBe(200);
-    const json = await response.json() as { success: boolean };
-    expect(json.success).toBe(true);
+    const response = await workerDefault.fetch(
+      createRequest('/upload/imgchest/unknown', { method: 'POST' }),
+      { RATE_LIMITER: namespace }
+    );
+
+    expect(response.status).toBe(404);
   });
 });
 

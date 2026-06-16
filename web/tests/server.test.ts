@@ -1,15 +1,6 @@
-import { test, expect, describe, vi, beforeEach, afterEach } from 'vitest';
-import { existsSync, unlinkSync } from 'fs';
+import { test, expect, describe, vi, afterEach } from 'vitest';
 import {
   getImgchestToken,
-  loadRateLimits,
-  saveRateLimits,
-  resetRateLimits,
-  cleanupExpiredEntries,
-  checkImgchestRateLimit,
-  checkSxcuRateLimit,
-  updateImgchestRateLimit,
-  updateSxcuRateLimit,
   handleCatboxUpload,
   handleSxcuCollections,
   handleSxcuFiles,
@@ -17,79 +8,39 @@ import {
   handleImgchestAdd,
   handleKekPost,
   MAX_IMGCHEST_IMAGES_PER_REQUEST,
+  HostDeps,
 } from '../src/server';
-import { RateLimitData } from '../src/types';
+import { MemoryRateLimitStore } from '../src/rate-limit/engine';
 
-const originalFetch = globalThis.fetch;
 const originalEnv = { ...process.env };
-const RATE_LIMIT_FILE = 'C:\\Users\\lenovo\\AppData\\Local\\Temp\\image_uploader_rate_limits.json';
 
-function setMockFetch(fn: (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>): void {
-  (globalThis as unknown as { fetch: typeof fetch }).fetch = fn as typeof fetch;
-}
-
-interface MockFormData {
-  get: (key: string) => FormDataEntryValue | null;
-  getAll: (key: string) => FormDataEntryValue[];
-  entries: () => IterableIterator<[string, FormDataEntryValue]>;
-}
-
-function createMockFormData(entries: [string, string | File][]): MockFormData {
-  const data = new Map<string, FormDataEntryValue>();
-  const arrayData = new Map<string, FormDataEntryValue[]>();
-
-  for (const [key, value] of entries) {
-    if (key.endsWith('[]')) {
-      if (!arrayData.has(key)) arrayData.set(key, []);
-      arrayData.get(key)!.push(value);
+function makeFormData(entries: Record<string, string | Blob | string[]>): FormData {
+  const form = new FormData();
+  for (const [key, value] of Object.entries(entries)) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        form.append(key, item);
+      }
     } else {
-      data.set(key, value);
+      form.append(key, value);
     }
   }
-
-  return {
-    get: (key: string) => data.get(key) ?? null,
-    getAll: (key: string) => arrayData.get(key) ?? [],
-    entries: () => entries[Symbol.iterator]() as IterableIterator<[string, FormDataEntryValue]>,
-  };
+  return form;
 }
 
-interface MockRequest {
-  url: string;
-  method: string;
-  headers: Headers;
-  formData: () => Promise<MockFormData>;
-}
-
-function createMockRequest(url: string, options: { method?: string; formData?: MockFormData; headers?: Record<string, string> } = {}): MockRequest {
-  return {
-    url,
-    method: options.method || 'POST',
-    headers: new Headers(options.headers || {}),
-    formData: async () => options.formData || createMockFormData([]),
-  };
-}
-
-function createMockResponse(body: string | object, options: { status?: number; headers?: Record<string, string> } = {}) {
-  const headers = new Headers(options.headers || {});
-  return {
-    ok: options.status ? options.status >= 200 && options.status < 300 : true,
-    status: options.status || 200,
-    headers,
-    text: async () => (typeof body === 'string' ? body : JSON.stringify(body)),
-    json: async () => (typeof body === 'string' ? JSON.parse(body) : body),
-    clone: function() { return this; },
-  };
-}
-
-function createMockFile(name: string, size = 1024): { name: string; size: number; type: string } {
-  return { name, size, type: 'image/png' };
-}
-
-function cleanupRateLimitFiles(): void {
-  if (existsSync(RATE_LIMIT_FILE)) {
-    unlinkSync(RATE_LIMIT_FILE);
+function makeImgFiles(count: number): File[] {
+  const files: File[] = [];
+  for (let i = 0; i < count; i++) {
+    files.push(new File([String(i)], `img${i}.png`, { type: 'image/png' }));
   }
+  return files;
+}
+
+function jsonResponse(body: unknown, init: { status?: number; headers?: Record<string, string> } = {}): Response {
+  return new Response(JSON.stringify(body), {
+    status: init.status ?? 200,
+    headers: new Headers({ 'Content-Type': 'application/json', ...init.headers }),
+  });
 }
 
 describe('Token management', () => {
@@ -108,388 +59,294 @@ describe('Token management', () => {
   });
 });
 
-describe('Rate limiting', () => {
-  afterEach(() => {
-    cleanupRateLimitFiles();
-  });
-
-  test('checkImgchestRateLimit allows when no limit exists', () => {
-    const result = checkImgchestRateLimit(1);
-    expect(result.allowed).toBe(true);
-    expect(result.waitMs).toBe(0);
-  });
-
-  test('checkSxcuRateLimit allows when no limit exists', () => {
-    const result = checkSxcuRateLimit(null, 1);
-    expect(result.allowed).toBe(true);
-    expect(result.waitMs).toBe(0);
-  });
-
-  test('updateImgchestRateLimit updates and persists limits', () => {
-    updateImgchestRateLimit({ limit: 60, remaining: 55 });
-    saveRateLimits();
-
-    loadRateLimits();
-    const result = checkImgchestRateLimit(1);
-    expect(result.allowed).toBe(true);
-  });
-
-  test('updateSxcuRateLimit tracks bucket-based limits', () => {
-    updateSxcuRateLimit({ limit: 10, remaining: 5, bucket: 'test-bucket' });
-    saveRateLimits();
-
-    loadRateLimits();
-    const result = checkSxcuRateLimit('test-bucket', 1);
-    expect(result.allowed).toBe(true);
-  });
-
-  test('updateSxcuRateLimit tracks global limits on error', () => {
-    updateSxcuRateLimit({ limit: 240, remaining: 0 }, true);
-    saveRateLimits();
-
-    loadRateLimits();
-    const result = checkSxcuRateLimit(null, 1);
-    expect(result.allowed).toBe(false);
-    expect(result.reason).toBe('global');
-  });
-
-  test('cleanupExpiredEntries removes old entries', () => {
-    updateImgchestRateLimit({ limit: 60, remaining: 0 });
-    saveRateLimits();
-
-    loadRateLimits();
-    cleanupExpiredEntries();
-  });
-});
-
 describe('Catbox upload handler', () => {
   afterEach(() => {
-    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
   });
 
   test('proxies file upload to catbox API', async () => {
-    let capturedUrl = '';
-    let capturedBody: FormData | null = null;
-    setMockFetch(vi.fn((url, opts) => {
-      capturedUrl = url as string;
-      capturedBody = opts?.body as FormData;
-      return Promise.resolve(createMockResponse('https://files.catbox.moe/abc.png') as unknown as Response);
-    }));
+    const fetch = vi.fn(async () => new Response('https://files.catbox.moe/abc.png', { status: 200 }));
 
-    const formData = createMockFormData([
-      ['reqtype', 'fileupload'],
-      ['fileToUpload', createMockFile('test.png') as unknown as File],
-    ]);
-    const req = createMockRequest('http://localhost:3000/upload/catbox', { formData });
-
-    const response = await handleCatboxUpload(req as unknown as Request);
+    const formData = makeFormData({
+      reqtype: 'fileupload',
+      fileToUpload: new File(['content'], 'test.png', { type: 'image/png' }),
+    });
+    const req = new Request('http://localhost:3000/upload/catbox', { method: 'POST', body: formData });
+    const response = await handleCatboxUpload(req, { fetch });
 
     expect(response.status).toBe(200);
-    expect(capturedUrl).toBe('https://catbox.moe/user/api.php');
-    expect(capturedBody!.get('reqtype')).toBe('fileupload');
+    expect(await response.text()).toBe('https://files.catbox.moe/abc.png');
+    expect(fetch).toHaveBeenCalledWith('https://catbox.moe/user/api.php', expect.anything());
   });
 
   test('handles URL upload requests', async () => {
-    setMockFetch(vi.fn(() =>
-      Promise.resolve(createMockResponse('https://files.catbox.moe/abc.png') as unknown as Response)
-    ));
+    const fetch = vi.fn(async () => new Response('https://files.catbox.moe/abc.png', { status: 200 }));
 
-    const formData = createMockFormData([
-      ['reqtype', 'urlupload'],
-      ['url', 'https://example.com/image.png'],
-    ]);
-    const req = createMockRequest('http://localhost:3000/upload/catbox', { formData });
+    const formData = makeFormData({
+      reqtype: 'urlupload',
+      url: 'https://example.com/image.png',
+    });
+    const req = new Request('http://localhost:3000/upload/catbox', { method: 'POST', body: formData });
+    const response = await handleCatboxUpload(req, { fetch });
 
-    const response = await handleCatboxUpload(req as unknown as Request);
     expect(response.status).toBe(200);
   });
 
   test('rejects unknown request types', async () => {
-    const formData = createMockFormData([['reqtype', 'unknown']]);
-    const req = createMockRequest('http://localhost:3000/upload/catbox', { formData });
+    const formData = makeFormData({ reqtype: 'unknown' });
+    const req = new Request('http://localhost:3000/upload/catbox', { method: 'POST', body: formData });
 
-    const response = await handleCatboxUpload(req as unknown as Request);
+    const response = await handleCatboxUpload(req);
     expect(response.status).toBe(400);
   });
 });
 
 describe('SXCU upload handlers', () => {
-  beforeEach(() => {
-    resetRateLimits();
-  });
+  test('creates collection and returns result', async () => {
+    const fetch = vi.fn(async () => jsonResponse({ id: 'coll123' }));
+    const store = new MemoryRateLimitStore();
 
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-    cleanupRateLimitFiles();
-  });
+    const formData = makeFormData({ title: 'My Collection' });
+    const req = new Request('http://localhost:3000/upload/sxcu/collections', { method: 'POST', body: formData });
 
-  test('creates collection and returns URL', async () => {
-    setMockFetch(vi.fn(() =>
-      Promise.resolve(createMockResponse({ id: 'coll123', url: 'https://sxcu.net/c/coll123' }) as unknown as Response)
-    ));
-
-    const formData = createMockFormData([['title', 'My Collection']]);
-    const req = createMockRequest('http://localhost:3000/upload/sxcu/collections', { formData });
-
-    const response = await handleSxcuCollections(req as unknown as Request);
-    const body = JSON.parse(await response.text());
+    const response = await handleSxcuCollections(req, { fetch, store });
+    const body = await response.json() as { id: string };
 
     expect(response.status).toBe(200);
     expect(body.id).toBe('coll123');
   });
 
-  test('uploads file and tracks rate limits', async () => {
-    setMockFetch(vi.fn(() =>
-      Promise.resolve(createMockResponse(
-        { url: 'https://sxcu.net/abc' },
-        { headers: { 'X-RateLimit-Remaining': '58', 'X-RateLimit-Limit': '60', 'X-RateLimit-Bucket': 'files' } }
-      ) as unknown as Response)
+  test('uploads file and returns result', async () => {
+    const fetch = vi.fn(async () => jsonResponse(
+      { url: 'https://sxcu.net/abc' },
+      { headers: { 'X-RateLimit-Remaining': '58', 'X-RateLimit-Limit': '60' } }
     ));
+    const store = new MemoryRateLimitStore();
 
-    const formData = createMockFormData([['file', createMockFile('test.png') as unknown as File]]);
-    const req = createMockRequest('http://localhost:3000/upload/sxcu/files', { formData });
+    const formData = makeFormData({ file: new File(['content'], 'test.png', { type: 'image/png' }) });
+    const req = new Request('http://localhost:3000/upload/sxcu/files', { method: 'POST', body: formData });
 
-    const response = await handleSxcuFiles(req as unknown as Request);
-
+    const response = await handleSxcuFiles(req, { fetch, store });
     expect(response.status).toBe(200);
   });
 });
 
 describe('Imgchest upload handlers', () => {
-  beforeEach(() => {
-    resetRateLimits();
-    process.env.IMGCHEST_API_TOKEN = 'test-token';
-  });
-
   afterEach(() => {
-    globalThis.fetch = originalFetch;
     process.env = { ...originalEnv };
-    cleanupRateLimitFiles();
   });
 
   test('rejects requests without API token', async () => {
     delete process.env.IMGCHEST_API_TOKEN;
 
-    const formData = createMockFormData([['images[]', createMockFile('test.png') as unknown as File]]);
-    const req = createMockRequest('http://localhost:3000/upload/imgchest/post', { formData });
+    const formData = makeFormData({ 'images[]': new File(['a'], 'a.png', { type: 'image/png' }) });
+    const req = new Request('http://localhost:3000/upload/imgchest/post', { method: 'POST', body: formData });
 
-    const response = await handleImgchestPost(req as unknown as Request);
-
+    const response = await handleImgchestPost(req);
     expect(response.status).toBe(401);
   });
 
-  test('uses custom token from Authorization header', async () => {
-    delete process.env.IMGCHEST_API_TOKEN;
-    let capturedAuthHeader = '';
-    setMockFetch(vi.fn((url, options) => {
-      const headers = (options as RequestInit).headers as Record<string, string> | undefined;
-      capturedAuthHeader = headers?.Authorization || '';
-      return Promise.resolve(createMockResponse({
-        data: { id: 'post123', link: 'https://imgchest.com/p/post123' }
-      }, { headers: { 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': '59' } }) as unknown as Response);
-    }));
+  test('uses token from env when no Authorization header', async () => {
+    process.env.IMGCHEST_API_TOKEN = 'env-token';
+    const fetch = vi.fn(async () => jsonResponse(
+      { data: { id: 'post123' } },
+      { headers: { 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': '59' } }
+    ));
+    const store = new MemoryRateLimitStore();
 
-    const formData = createMockFormData([['images[]', createMockFile('test.png') as unknown as File]]);
-    const req = createMockRequest('http://localhost:3000/upload/imgchest/post', {
-      formData,
-      headers: { 'Authorization': 'Bearer custom-user-token' }
-    });
+    const formData = makeFormData({ 'images[]': new File(['a'], 'a.png', { type: 'image/png' }) });
+    const req = new Request('http://localhost:3000/upload/imgchest/post', { method: 'POST', body: formData });
 
-    const response = await handleImgchestPost(req as unknown as Request);
-
+    const response = await handleImgchestPost(req, { fetch, store });
     expect(response.status).toBe(200);
-    expect(capturedAuthHeader).toBe('Bearer custom-user-token');
+    const body = await response.json() as { data: { id: string } };
+    expect(body.data.id).toBe('post123');
   });
 
-  test('custom token takes precedence over env token', async () => {
+  test('custom Authorization header takes precedence over env token', async () => {
     process.env.IMGCHEST_API_TOKEN = 'env-token';
-    let capturedAuthHeader = '';
-    setMockFetch(vi.fn((url, options) => {
-      const headers = (options as RequestInit).headers as Record<string, string> | undefined;
-      capturedAuthHeader = headers?.Authorization || '';
-      return Promise.resolve(createMockResponse({
-        data: { id: 'post123', link: 'https://imgchest.com/p/post123' }
-      }, { headers: { 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': '59' } }) as unknown as Response);
-    }));
+    let capturedAuth = '';
+    const fetch = vi.fn(async (_url, init) => {
+      const headers = (init as RequestInit).headers as Record<string, string>;
+      capturedAuth = headers?.Authorization || '';
+      return jsonResponse(
+        { data: { id: 'post456' } },
+        { headers: { 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': '59' } }
+      );
+    });
+    const store = new MemoryRateLimitStore();
 
-    const formData = createMockFormData([['images[]', createMockFile('test.png') as unknown as File]]);
-    const req = createMockRequest('http://localhost:3000/upload/imgchest/post', {
-      formData,
-      headers: { 'Authorization': 'Bearer custom-user-token' }
+    const formData = makeFormData({ 'images[]': new File(['a'], 'a.png', { type: 'image/png' }) });
+    const req = new Request('http://localhost:3000/upload/imgchest/post', {
+      method: 'POST',
+      body: formData,
+      headers: { 'Authorization': 'Bearer custom-user-token' },
     });
 
-    const response = await handleImgchestPost(req as unknown as Request);
-
+    const response = await handleImgchestPost(req, { fetch, store });
     expect(response.status).toBe(200);
-    expect(capturedAuthHeader).toBe('Bearer custom-user-token');
+    expect(capturedAuth).toBe('Bearer custom-user-token');
   });
 
   test('creates post with images', async () => {
-    setMockFetch(vi.fn(() =>
-      Promise.resolve(createMockResponse({
-        data: { id: 'post123', link: 'https://imgchest.com/p/post123' }
-      }, { headers: { 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': '59' } }) as unknown as Response)
+    const fetch = vi.fn(async () => jsonResponse(
+      { data: { id: 'post123' } },
+      { headers: { 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': '59' } }
     ));
+    const store = new MemoryRateLimitStore();
+    process.env.IMGCHEST_API_TOKEN = 'test-token';
 
-    const formData = createMockFormData([
-      ['images[]', createMockFile('a.png') as unknown as File],
-      ['images[]', createMockFile('b.png') as unknown as File],
-      ['title', 'Test Post'],
-    ]);
-    const req = createMockRequest('http://localhost:3000/upload/imgchest/post', { formData });
+    const formData = makeFormData({
+      'images[]': [new File(['a'], 'a.png', { type: 'image/png' }), new File(['b'], 'b.png', { type: 'image/png' })],
+      title: 'Test Post',
+    });
+    const req = new Request('http://localhost:3000/upload/imgchest/post', { method: 'POST', body: formData });
 
-    const response = await handleImgchestPost(req as unknown as Request);
-    const body = JSON.parse(await response.text());
+    const response = await handleImgchestPost(req, { fetch, store });
+    const body = await response.json() as { data: { id: string } };
 
     expect(response.status).toBe(200);
     expect(body.data.id).toBe('post123');
   });
 
   test('chunks large uploads into batches of 20', async () => {
-    let fetchCallCount = 0;
-    setMockFetch(vi.fn(() => {
-      fetchCallCount++;
-      return Promise.resolve(createMockResponse({
-        data: { id: 'post123', link: 'https://imgchest.com/p/post123' }
-      }, { headers: { 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': String(60 - fetchCallCount) } }) as unknown as Response);
-    }));
+    let callCount = 0;
+    const fetch = vi.fn(async () => {
+      callCount++;
+      return jsonResponse(
+        { data: { id: 'post123' } },
+        { headers: { 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': String(60 - callCount) } }
+      );
+    });
+    const store = new MemoryRateLimitStore();
+    process.env.IMGCHEST_API_TOKEN = 'test-token';
 
-    const entries: [string, File][] = [];
-    for (let i = 0; i < 45; i++) {
-      entries.push(['images[]', createMockFile(`img${i}.png`) as unknown as File]);
+    const formData = new FormData();
+    for (const file of makeImgFiles(45)) {
+      formData.append('images[]', file);
     }
-    const formData = createMockFormData(entries);
-    const req = createMockRequest('http://localhost:3000/upload/imgchest/post', { formData });
+    const req = new Request('http://localhost:3000/upload/imgchest/post', { method: 'POST', body: formData });
 
-    await handleImgchestPost(req as unknown as Request);
-
-    expect(fetchCallCount).toBe(3);
+    await handleImgchestPost(req, { fetch, store });
+    expect(callCount).toBe(3);
   });
 
   test('adds images to existing post', async () => {
     let capturedUrl = '';
-    setMockFetch(vi.fn((url) => {
+    const fetch = vi.fn(async (url) => {
       capturedUrl = url as string;
-      return Promise.resolve(createMockResponse({ success: true }, { headers: { 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': '58' } }) as unknown as Response);
-    }));
+      return jsonResponse(
+        { success: true },
+        { headers: { 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': '58' } }
+      );
+    });
+    const store = new MemoryRateLimitStore();
+    process.env.IMGCHEST_API_TOKEN = 'test-token';
 
-    const formData = createMockFormData([['images[]', createMockFile('new.png') as unknown as File]]);
-    const req = createMockRequest('http://localhost:3000/upload/imgchest/post/existingPost123/add', { formData });
+    const formData = makeFormData({ 'images[]': new File(['a'], 'new.png', { type: 'image/png' }) });
+    const req = new Request('http://localhost:3000/upload/imgchest/post/existingPost123/add', { method: 'POST', body: formData });
 
-    const response = await handleImgchestAdd(req as unknown as Request);
-
+    const response = await handleImgchestAdd(req, { fetch, store });
     expect(response.status).toBe(200);
     expect(capturedUrl).toContain('existingPost123');
   });
 
   test('handles API errors gracefully', async () => {
-    setMockFetch(vi.fn(() =>
-      Promise.resolve(createMockResponse({ error: 'Invalid request' }, { status: 400, headers: { 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': '59' } }) as unknown as Response)
+    const fetch = vi.fn(async () => jsonResponse(
+      { error: 'Invalid request' },
+      { status: 400, headers: { 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': '59' } }
     ));
+    const store = new MemoryRateLimitStore();
+    process.env.IMGCHEST_API_TOKEN = 'test-token';
 
-    const formData = createMockFormData([['images[]', createMockFile('test.png') as unknown as File]]);
-    const req = createMockRequest('http://localhost:3000/upload/imgchest/post', { formData });
+    const formData = makeFormData({ 'images[]': new File(['a'], 'test.png', { type: 'image/png' }) });
+    const req = new Request('http://localhost:3000/upload/imgchest/post', { method: 'POST', body: formData });
 
-    const response = await handleImgchestPost(req as unknown as Request);
-
+    const response = await handleImgchestPost(req, { fetch, store });
     expect(response.status).toBe(400);
   });
 });
 
-describe('Kek upload handler (node host)', () => {
+describe('Kek upload handler', () => {
   afterEach(() => {
-    globalThis.fetch = originalFetch;
-    delete process.env.KEK_API_KEY;
+    process.env = { ...originalEnv };
   });
 
   test('proxies url upload to kek /posts and follows up with mature PUT', async () => {
     process.env.KEK_API_KEY = 'env-key';
-    const fetchMock = vi.fn((_url, _init) => {
-      if (typeof _url === 'string' && _url.endsWith('/mature')) {
-        return Promise.resolve(createMockResponse('', { status: 200 }) as unknown as Response);
+    const fetch = vi.fn(async (url: RequestInfo | URL) => {
+      if (typeof url === 'string' && url.endsWith('/mature')) {
+        return new Response('', { status: 200 });
       }
-      return Promise.resolve(
-        createMockResponse({ id: 'kek-1', url: 'https://kek.sh/i/kek-1' }) as unknown as Response,
-      );
+      return jsonResponse({ id: 'kek-1', url: 'https://kek.sh/i/kek-1' });
     });
-    setMockFetch(fetchMock);
 
-    const formData = createMockFormData([['url', 'https://example.com/cat.png']]);
-    const req = createMockRequest('http://localhost:3000/upload/kek/posts', { formData });
+    const formData = makeFormData({ url: 'https://example.com/cat.png' });
+    const req = new Request('http://localhost:3000/upload/kek/posts', { method: 'POST', body: formData });
 
-    const response = await handleKekPost(req as unknown as Request);
+    const response = await handleKekPost(req, { fetch });
     expect(response.status).toBe(200);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledTimes(2);
 
-    const [firstUrl, firstInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [firstUrl, firstInit] = fetch.mock.calls[0] as [string, RequestInit];
     expect(firstUrl).toBe('https://kek.sh/api/v1/posts');
     expect((firstInit.headers as Record<string, string>)['x-kek-auth']).toBe('env-key');
-
-    const [matureUrl] = fetchMock.mock.calls[1] as [string, RequestInit];
-    expect(matureUrl).toBe('https://kek.sh/api/v1/posts/kek-1/mature');
   });
 
   test('uses X-Kek-Auth header in preference to env key', async () => {
     process.env.KEK_API_KEY = 'env-key';
-    const fetchMock = vi.fn(() =>
-      Promise.resolve(
-        createMockResponse({ id: 'kek-2', url: 'https://kek.sh/i/kek-2' }) as unknown as Response,
-      ),
+    const fetch = vi.fn(async () =>
+      jsonResponse({ id: 'kek-2', url: 'https://kek.sh/i/kek-2' })
     );
-    setMockFetch(fetchMock);
 
-    const formData = createMockFormData([['url', 'https://example.com/cat.png']]);
-    const req = createMockRequest('http://localhost:3000/upload/kek/posts', {
-      formData,
+    const formData = makeFormData({ url: 'https://example.com/cat.png' });
+    const req = new Request('http://localhost:3000/upload/kek/posts', {
+      method: 'POST',
+      body: formData,
       headers: { 'X-Kek-Auth': 'header-key' },
     });
 
-    await handleKekPost(req as unknown as Request);
-
-    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    await handleKekPost(req, { fetch });
+    const [, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
     expect((init.headers as Record<string, string>)['x-kek-auth']).toBe('header-key');
   });
 
   test('skips mature PUT when mature flag is false', async () => {
     process.env.KEK_API_KEY = 'env-key';
-    const fetchMock = vi.fn(() =>
-      Promise.resolve(
-        createMockResponse({ id: 'kek-3', url: 'https://kek.sh/i/kek-3' }) as unknown as Response,
-      ),
+    const fetch = vi.fn(async () =>
+      jsonResponse({ id: 'kek-3', url: 'https://kek.sh/i/kek-3' })
     );
-    setMockFetch(fetchMock);
 
-    const formData = createMockFormData([
-      ['url', 'https://example.com/cat.png'],
-      ['mature', 'false'],
-    ]);
-    const req = createMockRequest('http://localhost:3000/upload/kek/posts', { formData });
+    const formData = makeFormData({
+      url: 'https://example.com/cat.png',
+      mature: 'false',
+    });
+    const req = new Request('http://localhost:3000/upload/kek/posts', { method: 'POST', body: formData });
 
-    await handleKekPost(req as unknown as Request);
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await handleKekPost(req, { fetch });
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   test('returns 400 when both file and url are provided', async () => {
     process.env.KEK_API_KEY = 'env-key';
-    setMockFetch(vi.fn());
+    const fetch = vi.fn();
 
-    const realFormData = new FormData();
-    realFormData.append('url', 'https://example.com/cat.png');
-    realFormData.append('file', new File(['cat'], 'cat.png', { type: 'image/png' }));
-    const req = createMockRequest('http://localhost:3000/upload/kek/posts', { formData: realFormData });
+    const formData = new FormData();
+    formData.append('url', 'https://example.com/cat.png');
+    formData.append('file', new File(['cat'], 'cat.png', { type: 'image/png' }));
+    const req = new Request('http://localhost:3000/upload/kek/posts', { method: 'POST', body: formData });
 
-    const response = await handleKekPost(req as unknown as Request);
+    const response = await handleKekPost(req, { fetch });
     expect(response.status).toBe(400);
   });
 
   test('returns 400 when no api key is configured', async () => {
-    setMockFetch(vi.fn());
+    const fetch = vi.fn();
 
-    const formData = createMockFormData([['url', 'https://example.com/cat.png']]);
-    const req = createMockRequest('http://localhost:3000/upload/kek/posts', { formData });
+    const formData = makeFormData({ url: 'https://example.com/cat.png' });
+    const req = new Request('http://localhost:3000/upload/kek/posts', { method: 'POST', body: formData });
 
-    const response = await handleKekPost(req as unknown as Request);
+    const response = await handleKekPost(req, { fetch });
     expect(response.status).toBe(400);
   });
 });

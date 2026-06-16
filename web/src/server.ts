@@ -22,10 +22,16 @@ import {
 } from './types';
 import { CatboxProviderInputError, readCatboxUploadInput, uploadToCatbox } from './providers/catbox';
 import { KekProviderInputError, readKekUploadInput, uploadToKek } from './providers/kek';
-import { FAIL_FAST_RATE_LIMIT_POLICY, executeRateLimited } from './rate-limit/engine';
+import { FAIL_FAST_RATE_LIMIT_POLICY, RateLimitStore, executeRateLimited } from './rate-limit/engine';
 import { FileRateLimitStore } from './rate-limit/file-store';
+import { FetchLike } from './provider-protocol';
 import { SxcuUploadInput, uploadToSxcu } from './providers/sxcu';
 import { uploadToImgchest } from './providers/imgchest';
+
+export interface HostDeps {
+  fetch?: FetchLike;
+  store?: RateLimitStore;
+}
 
 const PORT = 3000;
 const TEMP_DIR = 'C:\\Users\\lenovo\\AppData\\Local\\Temp';
@@ -367,10 +373,10 @@ async function isSxcuGlobalError(response: Response): Promise<boolean> {
   }
 }
 
-async function handleCatboxUpload(req: Request): Promise<Response> {
+async function handleCatboxUpload(req: Request, deps?: HostDeps): Promise<Response> {
   try {
     const input = readCatboxUploadInput(await req.formData());
-    const result = await uploadToCatbox(input);
+    const result = await uploadToCatbox(input, { fetch: deps?.fetch });
 
     return new Response(String(result.body), {
       status: result.status >= 200 && result.status < 300 ? 200 : result.status,
@@ -391,7 +397,7 @@ async function handleCatboxUpload(req: Request): Promise<Response> {
   }
 }
 
-async function handleKekPost(req: Request): Promise<Response> {
+async function handleKekPost(req: Request, deps?: HostDeps): Promise<Response> {
   const headerApiKey = req.headers.get('X-Kek-Auth')?.trim() || undefined;
 
   let input;
@@ -418,7 +424,7 @@ async function handleKekPost(req: Request): Promise<Response> {
   }
 
   try {
-    const result = await uploadToKek(input);
+    const result = await uploadToKek(input, { fetch: deps?.fetch });
 
     return new Response(
       typeof result.body === 'string' ? result.body : JSON.stringify(result.body),
@@ -436,17 +442,17 @@ async function handleKekPost(req: Request): Promise<Response> {
   }
 }
 
-async function handleSxcuCollections(req: Request): Promise<Response> {
+async function handleSxcuCollections(req: Request, deps?: HostDeps): Promise<Response> {
   const formData = await req.formData();
 
   const input: SxcuUploadInput = { type: 'collection', formData };
-  const store = new FileRateLimitStore(RATE_LIMIT_FILE);
+  const store = deps?.store ?? new FileRateLimitStore(RATE_LIMIT_FILE);
 
   const result = await executeRateLimited({
     provider: 'sxcu',
     policy: FAIL_FAST_RATE_LIMIT_POLICY,
     store,
-    operation: () => uploadToSxcu(input),
+    operation: () => uploadToSxcu(input, { fetch: deps?.fetch }),
   });
 
   if (result.type === 'error') {
@@ -462,17 +468,17 @@ async function handleSxcuCollections(req: Request): Promise<Response> {
   });
 }
 
-async function handleSxcuFiles(req: Request): Promise<Response> {
+async function handleSxcuFiles(req: Request, deps?: HostDeps): Promise<Response> {
   const formData = await req.formData();
 
   const input: SxcuUploadInput = { type: 'file', formData };
-  const store = new FileRateLimitStore(RATE_LIMIT_FILE);
+  const store = deps?.store ?? new FileRateLimitStore(RATE_LIMIT_FILE);
 
   const result = await executeRateLimited({
     provider: 'sxcu',
     policy: FAIL_FAST_RATE_LIMIT_POLICY,
     store,
-    operation: () => uploadToSxcu(input),
+    operation: () => uploadToSxcu(input, { fetch: deps?.fetch }),
   });
 
   if (result.type === 'error') {
@@ -488,7 +494,7 @@ async function handleSxcuFiles(req: Request): Promise<Response> {
   });
 }
 
-async function handleImgchestPost(req: Request): Promise<Response> {
+async function handleImgchestPost(req: Request, deps?: HostDeps): Promise<Response> {
   const token = getBearerToken(req) ?? getImgchestToken();
   if (!token) {
     return new Response(JSON.stringify({
@@ -520,14 +526,14 @@ async function handleImgchestPost(req: Request): Promise<Response> {
     });
   }
 
-  const store = new FileRateLimitStore(RATE_LIMIT_FILE);
+  const store = deps?.store ?? new FileRateLimitStore(RATE_LIMIT_FILE);
   const result = await uploadToImgchest({
     images,
     token,
     title: title ?? undefined,
     privacy: privacy ?? undefined,
     nsfw: nsfwRaw !== null ? nsfwRaw === 'true' || nsfwRaw === '1' : undefined,
-  }, { store });
+  }, { fetch: deps?.fetch, store });
 
   return new Response(JSON.stringify(result.body), {
     headers: { 'Content-Type': 'application/json', ...buildRateLimitHeaders(result.rateLimitHeaders) },
@@ -535,7 +541,7 @@ async function handleImgchestPost(req: Request): Promise<Response> {
   });
 }
 
-async function handleImgchestAdd(req: Request): Promise<Response> {
+async function handleImgchestAdd(req: Request, deps?: HostDeps): Promise<Response> {
   const url = new URL(req.url);
   const pathParts = url.pathname.split('/');
   const postId = pathParts[4];
@@ -569,14 +575,14 @@ async function handleImgchestAdd(req: Request): Promise<Response> {
     });
   }
 
-  const store = new FileRateLimitStore(RATE_LIMIT_FILE);
+  const store = deps?.store ?? new FileRateLimitStore(RATE_LIMIT_FILE);
   const result = await uploadToImgchest({
     images,
     token,
     existingPostId: postId,
     privacy: privacy ?? undefined,
     nsfw: nsfw !== null ? nsfw === 'true' || nsfw === '1' : undefined,
-  }, { store });
+  }, { fetch: deps?.fetch, store });
 
   return new Response(JSON.stringify(result.body), {
     headers: { 'Content-Type': 'application/json', ...buildRateLimitHeaders(result.rateLimitHeaders) },
@@ -744,15 +750,6 @@ export {
   getImgchestToken,
   getKekKey,
   handleKekPost,
-  loadRateLimits,
-  saveRateLimits,
-  resetRateLimits,
-  cleanupExpiredEntries,
-  checkImgchestRateLimit,
-  checkSxcuRateLimit,
-  updateImgchestRateLimit,
-  updateSxcuRateLimit,
-  executeWithRateLimitRetry,
   handleCatboxUpload,
   handleSxcuCollections,
   handleSxcuFiles,
