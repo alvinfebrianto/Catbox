@@ -5,3 +5,4 @@ dist/
 *.exe
 *.syso
 *.txt
+nul

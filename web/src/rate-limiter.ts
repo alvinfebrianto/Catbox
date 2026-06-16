@@ -16,6 +16,8 @@ import {
   validateFiles,
   validateImgchestFiles,
 } from './types';
+import { FAIL_FAST_RATE_LIMIT_POLICY, DurableObjectRateLimitStore, executeRateLimited } from './rate-limit/engine';
+import { SxcuUploadInput, uploadToSxcu } from './providers/sxcu';
 
 const SXCU_GLOBAL_BUCKET = '__sxcu_global__';
 
@@ -338,6 +340,20 @@ export class RateLimiter {
       const value = apiHeaders.get(name);
       if (value) responseHeaders.set(name, value);
     }
+
+    return responseHeaders;
+  }
+
+  private createResponseHeadersFromProvider(rlh: RateLimitHeaders | undefined, corsHeaders: Record<string, string>): Headers {
+    const responseHeaders = new Headers(corsHeaders);
+    responseHeaders.set('Content-Type', 'application/json');
+
+    if (rlh?.limit !== undefined) responseHeaders.set('X-RateLimit-Limit', String(rlh.limit));
+    if (rlh?.remaining !== undefined) responseHeaders.set('X-RateLimit-Remaining', String(rlh.remaining));
+    if (rlh?.reset !== undefined) responseHeaders.set('X-RateLimit-Reset', String(rlh.reset));
+    if (rlh?.resetAfter !== undefined) responseHeaders.set('X-RateLimit-Reset-After', String(rlh.resetAfter));
+    if (rlh?.bucket !== undefined) responseHeaders.set('X-RateLimit-Bucket', rlh.bucket);
+    if (rlh?.isGlobal) responseHeaders.set('X-RateLimit-Global', 'true');
 
     return responseHeaders;
   }
@@ -669,41 +685,28 @@ export class RateLimiter {
 
   private async handleSxcuCollections(request: Request, corsHeaders: Record<string, string>): Promise<Response> {
     const formData = await request.formData();
-    let knownBucket: string | null = null;
 
-    try {
-      const { response, result } = await this.executeWithRateLimitRetry(
-        'sxcu',
-        knownBucket,
-        async () => {
-          const resp = await fetch('https://sxcu.net/api/collections/create', {
-            method: 'POST',
-            body: formData,
-            headers: { 'User-Agent': 'CatboxUploader/2.0' },
-          });
+    const input: SxcuUploadInput = { type: 'collection', formData };
+    const store = new DurableObjectRateLimitStore(this.storage);
 
-          const headers = parseRateLimitHeaders(resp.headers);
-          knownBucket = headers.bucket || null;
+    const result = await executeRateLimited({
+      provider: 'sxcu',
+      policy: FAIL_FAST_RATE_LIMIT_POLICY,
+      store,
+      operation: () => uploadToSxcu(input),
+    });
 
-          const isGlobalError = resp.status === 429 && headers.isGlobal;
-
-          const json = await resp.json();
-          return { response: resp, result: json as Record<string, unknown>, isGlobalError };
-        }
-      );
-
-      return new Response(JSON.stringify(result), {
-        headers: this.createResponseHeaders(response.headers, corsHeaders),
-        status: response.ok ? 200 : response.status,
-      });
-
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      return new Response(JSON.stringify({ error: message }), {
+    if (result.type === 'error') {
+      return new Response(JSON.stringify({ error: result.error }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 500,
       });
     }
+
+    return new Response(JSON.stringify(result.providerResult.body), {
+      headers: this.createResponseHeadersFromProvider(result.providerResult.rateLimitHeaders, corsHeaders),
+      status: result.providerResult.status,
+    });
   }
 
   private async handleSxcuFiles(request: Request, corsHeaders: Record<string, string>): Promise<Response> {
@@ -720,48 +723,26 @@ export class RateLimiter {
       }
     }
 
-    let knownBucket: string | null = null;
+    const input: SxcuUploadInput = { type: 'file', formData };
+    const store = new DurableObjectRateLimitStore(this.storage);
 
-    try {
-      const { response, result } = await this.executeWithRateLimitRetry(
-        'sxcu',
-        knownBucket,
-        async () => {
-          const resp = await fetch('https://sxcu.net/api/files/create', {
-            method: 'POST',
-            body: formData,
-            headers: { 'User-Agent': 'CatboxUploader/2.0' },
-          });
+    const result = await executeRateLimited({
+      provider: 'sxcu',
+      policy: FAIL_FAST_RATE_LIMIT_POLICY,
+      store,
+      operation: () => uploadToSxcu(input),
+    });
 
-          const headers = parseRateLimitHeaders(resp.headers);
-          knownBucket = headers.bucket || null;
-
-          const text = await resp.text();
-          let json: Record<string, unknown>;
-
-          try {
-            json = JSON.parse(text);
-          } catch {
-            json = { error: text };
-          }
-
-          const isGlobalError = resp.status === 429 && (headers.isGlobal || (json as { code?: number }).code === 2);
-
-          return { response: resp, result: json, isGlobalError };
-        }
-      );
-
-      return new Response(JSON.stringify(result), {
-        headers: this.createResponseHeaders(response.headers, corsHeaders),
-        status: response.ok ? 200 : response.status,
-      });
-
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      return new Response(JSON.stringify({ error: message }), {
+    if (result.type === 'error') {
+      return new Response(JSON.stringify({ error: result.error }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 500,
       });
     }
+
+    return new Response(JSON.stringify(result.providerResult.body), {
+      headers: this.createResponseHeadersFromProvider(result.providerResult.rateLimitHeaders, corsHeaders),
+      status: result.providerResult.status,
+    });
   }
 }

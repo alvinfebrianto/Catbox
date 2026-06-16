@@ -22,6 +22,9 @@ import {
 } from './types';
 import { CatboxProviderInputError, readCatboxUploadInput, uploadToCatbox } from './providers/catbox';
 import { KekProviderInputError, readKekUploadInput, uploadToKek } from './providers/kek';
+import { FAIL_FAST_RATE_LIMIT_POLICY, executeRateLimited } from './rate-limit/engine';
+import { FileRateLimitStore } from './rate-limit/file-store';
+import { SxcuUploadInput, uploadToSxcu } from './providers/sxcu';
 
 const PORT = 3000;
 const TEMP_DIR = 'C:\\Users\\lenovo\\AppData\\Local\\Temp';
@@ -434,94 +437,54 @@ async function handleKekPost(req: Request): Promise<Response> {
 
 async function handleSxcuCollections(req: Request): Promise<Response> {
   const formData = await req.formData();
-  let knownBucket: string | null = null;
 
-  try {
-    const { response, result } = await executeWithRateLimitRetry(
-      'sxcu',
-      knownBucket,
-      async () => {
-        const resp = await fetch('https://sxcu.net/api/collections/create', {
-          method: 'POST',
-          body: formData,
-          headers: { 'User-Agent': 'CatboxUploader/2.0' },
-        });
+  const input: SxcuUploadInput = { type: 'collection', formData };
+  const store = new FileRateLimitStore(RATE_LIMIT_FILE);
 
-        const headers = parseRateLimitHeaders(resp.headers);
-        knownBucket = headers.bucket || null;
+  const result = await executeRateLimited({
+    provider: 'sxcu',
+    policy: FAIL_FAST_RATE_LIMIT_POLICY,
+    store,
+    operation: () => uploadToSxcu(input),
+  });
 
-        const isGlobalError = resp.status === 429 && headers.isGlobal;
-
-        const json = await resp.json();
-        return { response: resp, result: json as Record<string, unknown>, isGlobalError };
-      }
-    );
-
-    const responseHeaders = new Headers({ 'Content-Type': 'application/json' });
-    copyRateLimitHeaders(response.headers, responseHeaders);
-
-    return new Response(JSON.stringify(result), {
-      headers: responseHeaders,
-      status: response.ok ? 200 : response.status,
-    });
-
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return new Response(JSON.stringify({ error: message }), {
+  if (result.type === 'error') {
+    return new Response(JSON.stringify({ error: result.error }), {
       headers: { 'Content-Type': 'application/json' },
       status: 500,
     });
   }
+
+  return new Response(JSON.stringify(result.providerResult.body), {
+    headers: buildRateLimitHeaders(result.providerResult.rateLimitHeaders),
+    status: result.providerResult.status,
+  });
 }
 
 async function handleSxcuFiles(req: Request): Promise<Response> {
   const formData = await req.formData();
-  let knownBucket: string | null = null;
 
-  try {
-    const { response, result } = await executeWithRateLimitRetry(
-      'sxcu',
-      knownBucket,
-      async () => {
-        const resp = await fetch('https://sxcu.net/api/files/create', {
-          method: 'POST',
-          body: formData,
-          headers: { 'User-Agent': 'CatboxUploader/2.0' },
-        });
+  const input: SxcuUploadInput = { type: 'file', formData };
+  const store = new FileRateLimitStore(RATE_LIMIT_FILE);
 
-        const headers = parseRateLimitHeaders(resp.headers);
-        knownBucket = headers.bucket || null;
+  const result = await executeRateLimited({
+    provider: 'sxcu',
+    policy: FAIL_FAST_RATE_LIMIT_POLICY,
+    store,
+    operation: () => uploadToSxcu(input),
+  });
 
-        const text = await resp.text();
-        let json: Record<string, unknown>;
-
-        try {
-          json = JSON.parse(text);
-        } catch {
-          json = { error: text };
-        }
-
-        const isGlobalError = resp.status === 429 && (headers.isGlobal || (json as { code?: number }).code === 2);
-
-        return { response: resp, result: json, isGlobalError };
-      }
-    );
-
-    const responseHeaders = new Headers({ 'Content-Type': 'application/json' });
-    copyRateLimitHeaders(response.headers, responseHeaders);
-
-    return new Response(JSON.stringify(result), {
-      headers: responseHeaders,
-      status: response.ok ? 200 : response.status,
-    });
-
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return new Response(JSON.stringify({ error: message }), {
+  if (result.type === 'error') {
+    return new Response(JSON.stringify({ error: result.error }), {
       headers: { 'Content-Type': 'application/json' },
       status: 500,
     });
   }
+
+  return new Response(JSON.stringify(result.providerResult.body), {
+    headers: buildRateLimitHeaders(result.providerResult.rateLimitHeaders),
+    status: result.providerResult.status,
+  });
 }
 
 async function handleImgchestPost(req: Request): Promise<Response> {
@@ -830,6 +793,19 @@ async function handleImgchestAdd(req: Request): Promise<Response> {
     headers: responseHeaders,
     status: 200,
   });
+}
+
+function buildRateLimitHeaders(rlh: RateLimitHeaders | undefined): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+
+  if (rlh?.limit !== undefined) headers['X-RateLimit-Limit'] = String(rlh.limit);
+  if (rlh?.remaining !== undefined) headers['X-RateLimit-Remaining'] = String(rlh.remaining);
+  if (rlh?.reset !== undefined) headers['X-RateLimit-Reset'] = String(rlh.reset);
+  if (rlh?.resetAfter !== undefined) headers['X-RateLimit-Reset-After'] = String(rlh.resetAfter);
+  if (rlh?.bucket !== undefined) headers['X-RateLimit-Bucket'] = rlh.bucket;
+  if (rlh?.isGlobal) headers['X-RateLimit-Global'] = 'true';
+
+  return headers;
 }
 
 function copyRateLimitHeaders(from: Headers, to: Headers): void {
