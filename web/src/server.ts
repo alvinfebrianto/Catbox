@@ -1,23 +1,11 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'http';
 import { Readable } from 'stream';
 import { pathToFileURL } from 'url';
-import { writeFileSync, unlinkSync, mkdirSync, existsSync, readFileSync } from 'fs';
-import { resolve, normalize, extname, sep } from 'path';
+import { mkdirSync, existsSync, readFileSync } from 'fs';
+import { resolve, extname, sep } from 'path';
 import {
-  RateLimitEntry,
-  AllRateLimits,
-  RateLimitCheckResult,
   RateLimitHeaders,
-  RetryConfig,
-  DEFAULT_RETRY_CONFIG,
-  IMGCHEST_RATE_LIMIT,
-  SXCU_RATE_LIMIT,
   MAX_IMGCHEST_IMAGES_PER_REQUEST,
-  parseRateLimitHeaders,
-  calculateExponentialBackoff,
-  calculateWaitTimeFromHeaders,
-  isRateLimitExpired,
-  createRateLimitEntry,
   validateKekFiles,
 } from './types';
 import { CatboxProviderInputError, readCatboxUploadInput, uploadToCatbox } from './providers/catbox';
@@ -36,9 +24,6 @@ export interface HostDeps {
 const PORT = 3000;
 const TEMP_DIR = 'C:\\Users\\lenovo\\AppData\\Local\\Temp';
 const RATE_LIMIT_FILE = `${TEMP_DIR}\\image_uploader_rate_limits.json`;
-const SXCU_GLOBAL_BUCKET = '__sxcu_global__';
-const DEBUG = process.env.DEBUG === 'true';
-
 const PUBLIC_ROOT = resolve(process.cwd());
 const ALLOWED_STATIC_EXTS = new Set(['.html', '.css', '.js', '.map', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico']);
 
@@ -73,61 +58,6 @@ function safeStaticPath(urlPath: string): string | null {
   return resolved;
 }
 
-let rateLimits: AllRateLimits = {
-  imgchest: { default: null },
-  sxcu: { buckets: {}, global: null },
-  catbox: { default: null },
-};
-
-function loadRateLimits(): void {
-  if (existsSync(RATE_LIMIT_FILE)) {
-    try {
-      rateLimits = JSON.parse(readFileSync(RATE_LIMIT_FILE, 'utf-8'));
-      cleanupExpiredEntries();
-    } catch {
-      rateLimits = {
-        imgchest: { default: null },
-        sxcu: { buckets: {}, global: null },
-        catbox: { default: null },
-      };
-    }
-  }
-}
-
-function resetRateLimits(): void {
-  rateLimits = {
-    imgchest: { default: null },
-    sxcu: { buckets: {}, global: null },
-    catbox: { default: null },
-  };
-}
-
-function saveRateLimits(): void {
-  writeFileSync(RATE_LIMIT_FILE, JSON.stringify(rateLimits, null, 2));
-}
-
-function cleanupExpiredEntries(): void {
-  const now = Date.now();
-
-  if (rateLimits.imgchest.default && isRateLimitExpired(rateLimits.imgchest.default, now)) {
-    rateLimits.imgchest.default = null;
-  }
-
-  if (rateLimits.sxcu.global && isRateLimitExpired(rateLimits.sxcu.global, now)) {
-    rateLimits.sxcu.global = null;
-  }
-
-  for (const bucket of Object.keys(rateLimits.sxcu.buckets)) {
-    if (isRateLimitExpired(rateLimits.sxcu.buckets[bucket], now)) {
-      delete rateLimits.sxcu.buckets[bucket];
-    }
-  }
-
-  if (rateLimits.catbox.default && isRateLimitExpired(rateLimits.catbox.default, now)) {
-    rateLimits.catbox.default = null;
-  }
-}
-
 function getImgchestToken(): string | null {
   return process.env.IMGCHEST_API_TOKEN || null;
 }
@@ -143,234 +73,6 @@ function getBearerToken(req: Request): string | null {
   const m = raw.match(/^Bearer\s+(.+)$/i);
   const token = (m ? m[1] : raw).trim();
   return token || null;
-}
-
-function checkImgchestRateLimit(cost: number = 1): RateLimitCheckResult {
-  const now = Date.now();
-  const entry = rateLimits.imgchest.default;
-
-  if (!entry || isRateLimitExpired(entry, now)) {
-    return { allowed: true, waitMs: 0 };
-  }
-
-  if (entry.remaining < cost) {
-    const waitMs = entry.resetAt - now + 100;
-    return {
-      allowed: false,
-      waitMs: Math.max(waitMs, 100),
-      reason: 'bucket',
-      resetAt: entry.resetAt,
-    };
-  }
-
-  return { allowed: true, waitMs: 0 };
-}
-
-function checkSxcuRateLimit(bucketId: string | null, cost: number = 1): RateLimitCheckResult {
-  const now = Date.now();
-
-  const globalEntry = rateLimits.sxcu.global;
-  if (globalEntry && !isRateLimitExpired(globalEntry, now)) {
-    if (globalEntry.remaining < cost) {
-      const waitMs = globalEntry.resetAt - now + 100;
-      return {
-        allowed: false,
-        waitMs: Math.max(waitMs, 100),
-        reason: 'global',
-        bucket: SXCU_GLOBAL_BUCKET,
-        resetAt: globalEntry.resetAt,
-      };
-    }
-  }
-
-  if (bucketId) {
-    const bucketEntry = rateLimits.sxcu.buckets[bucketId];
-    if (bucketEntry && !isRateLimitExpired(bucketEntry, now)) {
-      if (bucketEntry.remaining < cost) {
-        const waitMs = bucketEntry.resetAt - now + 100;
-        return {
-          allowed: false,
-          waitMs: Math.max(waitMs, 100),
-          reason: 'bucket',
-          bucket: bucketId,
-          resetAt: bucketEntry.resetAt,
-        };
-      }
-    }
-  }
-
-  return { allowed: true, waitMs: 0 };
-}
-
-function updateImgchestRateLimit(headers: RateLimitHeaders): void {
-  const now = Date.now();
-
-  if (headers.limit !== undefined && headers.remaining !== undefined) {
-    rateLimits.imgchest.default = {
-      limit: headers.limit,
-      remaining: headers.remaining,
-      resetAt: now + IMGCHEST_RATE_LIMIT.windowMs,
-      windowStart: now,
-      lastUpdated: now,
-    };
-  } else if (rateLimits.imgchest.default) {
-    rateLimits.imgchest.default.remaining = Math.max(0, rateLimits.imgchest.default.remaining - 1);
-    rateLimits.imgchest.default.lastUpdated = now;
-  }
-
-  saveRateLimits();
-}
-
-function updateSxcuRateLimit(headers: RateLimitHeaders, isGlobalError: boolean = false): void {
-  const now = Date.now();
-
-  if (isGlobalError || headers.isGlobal) {
-    rateLimits.sxcu.global = createRateLimitEntry({
-      limit: SXCU_RATE_LIMIT.globalRequestsPerMinute,
-      remaining: 0,
-      resetAfter: headers.resetAfter,
-      reset: headers.reset,
-    }, now);
-  } else {
-    if (rateLimits.sxcu.global) {
-      rateLimits.sxcu.global.remaining = Math.max(0, rateLimits.sxcu.global.remaining - 1);
-      rateLimits.sxcu.global.lastUpdated = now;
-    } else {
-      rateLimits.sxcu.global = {
-        limit: SXCU_RATE_LIMIT.globalRequestsPerMinute,
-        remaining: SXCU_RATE_LIMIT.globalRequestsPerMinute - 1,
-        resetAt: now + SXCU_RATE_LIMIT.globalWindowMs,
-        windowStart: now,
-        lastUpdated: now,
-      };
-    }
-  }
-
-  if (headers.bucket && headers.limit !== undefined && headers.remaining !== undefined) {
-    rateLimits.sxcu.buckets[headers.bucket] = createRateLimitEntry(headers, now);
-  }
-
-  saveRateLimits();
-}
-
-async function waitWithBackoff(
-  waitMs: number,
-  attempt: number,
-  config: RetryConfig = DEFAULT_RETRY_CONFIG
-): Promise<void> {
-  const backoffMs = calculateExponentialBackoff(attempt, config);
-  const actualWaitMs = Math.max(waitMs, backoffMs);
-  const cappedWaitMs = Math.min(actualWaitMs, config.maxDelayMs);
-
-  if (DEBUG) {
-    console.log(`[Rate Limit] Waiting ${cappedWaitMs}ms before retry (attempt ${attempt + 1})`);
-  }
-  await new Promise(resolve => setTimeout(resolve, cappedWaitMs));
-}
-
-async function executeWithRateLimitRetry<T>(
-  provider: 'imgchest' | 'sxcu',
-  bucketId: string | null,
-  operation: () => Promise<{ response: Response; result: T; isGlobalError?: boolean }>,
-  config: RetryConfig = DEFAULT_RETRY_CONFIG
-): Promise<{ response: Response; result: T | { error: string } }> {
-  let lastError: Error | null = null;
-
-  for (let attempt = 0; attempt <= config.maxRetries; attempt++) {
-    cleanupExpiredEntries();
-
-    const checkResult = provider === 'imgchest'
-      ? checkImgchestRateLimit(1)
-      : checkSxcuRateLimit(bucketId, 1);
-
-    if (!checkResult.allowed) {
-      if (DEBUG) {
-        console.log(`[Rate Limit] Pre-flight check failed for ${provider}: ${checkResult.reason}`);
-      }
-
-      if (provider === 'sxcu') {
-        const headers = new Headers();
-        headers.set('X-RateLimit-Remaining', '0');
-        if (checkResult.resetAt) {
-          headers.set('X-RateLimit-Reset', Math.ceil(checkResult.resetAt / 1000).toString());
-        }
-        headers.set('X-RateLimit-Limit', '5');
-        if (checkResult.bucket) headers.set('X-RateLimit-Bucket', checkResult.bucket);
-        if (checkResult.reason === 'global') headers.set('X-RateLimit-Global', 'true');
-
-        return {
-          response: new Response(JSON.stringify({ error: 'Rate limit exceeded' }), {
-            status: 429,
-            headers,
-          }),
-          result: { error: 'Rate limit exceeded' }
-        };
-      }
-
-      if (attempt === config.maxRetries) {
-        throw new Error(`Rate limit exceeded for ${provider}. Reset at: ${new Date(checkResult.resetAt || Date.now()).toISOString()}`);
-      }
-      await waitWithBackoff(checkResult.waitMs, attempt, config);
-      continue;
-    }
-
-    try {
-      const { response, result, isGlobalError: opIsGlobalError } = await operation();
-
-      if (response.status === 429) {
-        const headers = parseRateLimitHeaders(response.headers);
-        let isGlobalError = headers.isGlobal;
-        
-        if (provider === 'sxcu') {
-          if (opIsGlobalError !== undefined) {
-            isGlobalError = isGlobalError || opIsGlobalError;
-          } else if (!isGlobalError && !response.bodyUsed) {
-            isGlobalError = await isSxcuGlobalError(response.clone());
-          }
-          updateSxcuRateLimit(headers, isGlobalError);
-          return { response, result };
-        } else {
-          updateImgchestRateLimit(headers);
-        }
-
-        if (DEBUG) {
-          console.log(`[Rate Limit] Received 429 for ${provider}, global: ${isGlobalError}`);
-        }
-
-        if (attempt === config.maxRetries) {
-          throw new Error(`Rate limit exceeded for ${provider} after ${config.maxRetries} retries`);
-        }
-
-        const waitMs = calculateWaitTimeFromHeaders(headers);
-        await waitWithBackoff(waitMs, attempt, config);
-        continue;
-      }
-
-      return { response, result };
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
-      if (DEBUG) {
-        console.error(`[Rate Limit] Error on attempt ${attempt + 1}:`, lastError.message);
-      }
-
-      if (attempt === config.maxRetries) {
-        throw lastError;
-      }
-
-      await waitWithBackoff(1000, attempt, config);
-    }
-  }
-
-  throw lastError || new Error('Unknown error during rate-limited operation');
-}
-
-async function isSxcuGlobalError(response: Response): Promise<boolean> {
-  try {
-    const json = await response.json() as { code?: number; error?: string };
-    return json.code === 2 || (json.error?.includes('Global rate limit') ?? false);
-  } catch {
-    return false;
-  }
 }
 
 async function handleCatboxUpload(req: Request, deps?: HostDeps): Promise<Response> {
@@ -603,28 +305,10 @@ function buildRateLimitHeaders(rlh: RateLimitHeaders | undefined): Record<string
   return headers;
 }
 
-function copyRateLimitHeaders(from: Headers, to: Headers): void {
-  const rateLimitHeaderNames = [
-    'X-RateLimit-Limit',
-    'X-RateLimit-Remaining',
-    'X-RateLimit-Reset',
-    'X-RateLimit-Reset-After',
-    'X-RateLimit-Bucket',
-    'X-RateLimit-Global',
-  ];
-
-  for (const name of rateLimitHeaderNames) {
-    const value = from.get(name);
-    if (value) to.set(name, value);
-  }
-}
-
 function handleRequest(req: Request): Response | Promise<Response> {
   const url = new URL(req.url);
   const method = req.method;
   const path = url.pathname;
-
-  cleanupExpiredEntries();
 
   if (method === 'POST' && path === '/upload/catbox') {
     return handleCatboxUpload(req);
@@ -724,8 +408,6 @@ if (isMain) {
   if (!existsSync(TEMP_DIR)) {
     mkdirSync(TEMP_DIR, { recursive: true });
   }
-
-  loadRateLimits();
 
   const server = createServer((req, res) => {
     void (async () => {
