@@ -25,6 +25,7 @@ import { KekProviderInputError, readKekUploadInput, uploadToKek } from './provid
 import { FAIL_FAST_RATE_LIMIT_POLICY, executeRateLimited } from './rate-limit/engine';
 import { FileRateLimitStore } from './rate-limit/file-store';
 import { SxcuUploadInput, uploadToSxcu } from './providers/sxcu';
+import { uploadToImgchest } from './providers/imgchest';
 
 const PORT = 3000;
 const TEMP_DIR = 'C:\\Users\\lenovo\\AppData\\Local\\Temp';
@@ -508,105 +509,29 @@ async function handleImgchestPost(req: Request): Promise<Response> {
     });
   }
 
-  const otherEntries: [string, FormDataEntryValue][] = [];
-  for (const [key, value] of formData.entries()) {
-    if (key !== 'images[]') {
-      otherEntries.push([key, value]);
-    }
+  const title = formData.get('title') as string | null;
+  const privacy = formData.get('privacy') as string | null;
+  const nsfwRaw = formData.get('nsfw') as string | null;
+
+  if (privacy !== null && !['public', 'hidden', 'secret'].includes(privacy)) {
+    return new Response(JSON.stringify({ error: 'Invalid privacy value. Must be public, hidden, or secret.' }), {
+      headers: { 'Content-Type': 'application/json' },
+      status: 400,
+    });
   }
 
-  const chunks: File[][] = [];
-  for (let i = 0; i < images.length; i += MAX_IMGCHEST_IMAGES_PER_REQUEST) {
-    chunks.push(images.slice(i, i + MAX_IMGCHEST_IMAGES_PER_REQUEST));
-  }
+  const store = new FileRateLimitStore(RATE_LIMIT_FILE);
+  const result = await uploadToImgchest({
+    images,
+    token,
+    title: title ?? undefined,
+    privacy: privacy ?? undefined,
+    nsfw: nsfwRaw !== null ? nsfwRaw === 'true' || nsfwRaw === '1' : undefined,
+  }, { store });
 
-  let finalResult: Record<string, unknown> | null = null;
-  let lastResponseHeaders: Headers | null = null;
-
-  for (let i = 0; i < chunks.length; i++) {
-    const chunk = chunks[i];
-    const isFirstChunk = i === 0;
-
-    const chunkFormData = new FormData();
-    if (isFirstChunk) {
-      for (const [key, value] of otherEntries) {
-        chunkFormData.append(key, value);
-      }
-    }
-    for (const image of chunk) {
-      chunkFormData.append('images[]', image);
-    }
-
-    const url: string = isFirstChunk
-      ? 'https://api.imgchest.com/v1/post'
-      : `https://api.imgchest.com/v1/post/${(finalResult as { data: { id: string } })?.data?.id}/add`;
-
-    try {
-      const { response, result } = await executeWithRateLimitRetry(
-        'imgchest',
-        null,
-        async (): Promise<{ response: Response; result: Record<string, unknown> }> => {
-          const resp: Response = await fetch(url, {
-            method: 'POST',
-            body: chunkFormData,
-            headers: { 'Authorization': 'Bearer ' + token },
-          });
-
-          const headers = parseRateLimitHeaders(resp.headers);
-          updateImgchestRateLimit(headers);
-
-          const text = await resp.text();
-
-          if (text.trim().startsWith('<')) {
-            throw new Error('Unauthorized or API error - received HTML response');
-          }
-
-          let json: Record<string, unknown>;
-          try {
-            json = JSON.parse(text);
-          } catch {
-            throw new Error(`Failed to parse JSON: ${text.substring(0, 200)}`);
-          }
-
-          return { response: resp, result: json };
-        }
-      );
-
-      if (!response.ok) {
-        return new Response(JSON.stringify({
-          error: 'Imgchest API error',
-          status: response.status,
-          details: result,
-          chunk: i + 1,
-        }), {
-          headers: { 'Content-Type': 'application/json' },
-          status: response.status,
-        });
-      }
-
-      finalResult = result;
-      lastResponseHeaders = response.headers;
-
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      return new Response(JSON.stringify({
-        error: message,
-        chunk: i + 1,
-      }), {
-        headers: { 'Content-Type': 'application/json' },
-        status: 500,
-      });
-    }
-  }
-
-  const responseHeaders = new Headers({ 'Content-Type': 'application/json' });
-  if (lastResponseHeaders) {
-    copyRateLimitHeaders(lastResponseHeaders, responseHeaders);
-  }
-
-  return new Response(JSON.stringify(finalResult), {
-    headers: responseHeaders,
-    status: 200,
+  return new Response(JSON.stringify(result.body), {
+    headers: { 'Content-Type': 'application/json', ...buildRateLimitHeaders(result.rateLimitHeaders) },
+    status: result.status,
   });
 }
 
@@ -644,154 +569,18 @@ async function handleImgchestAdd(req: Request): Promise<Response> {
     });
   }
 
-  const chunks: File[][] = [];
-  for (let i = 0; i < images.length; i += MAX_IMGCHEST_IMAGES_PER_REQUEST) {
-    chunks.push(images.slice(i, i + MAX_IMGCHEST_IMAGES_PER_REQUEST));
-  }
+  const store = new FileRateLimitStore(RATE_LIMIT_FILE);
+  const result = await uploadToImgchest({
+    images,
+    token,
+    existingPostId: postId,
+    privacy: privacy ?? undefined,
+    nsfw: nsfw !== null ? nsfw === 'true' || nsfw === '1' : undefined,
+  }, { store });
 
-  let finalResult: Record<string, unknown> | null = null;
-  let lastResponseHeaders: Headers | null = null;
-
-  for (let i = 0; i < chunks.length; i++) {
-    const chunk = chunks[i];
-    const chunkFormData = new FormData();
-    for (const image of chunk) {
-      chunkFormData.append('images[]', image);
-    }
-
-    try {
-      const { response, result } = await executeWithRateLimitRetry(
-        'imgchest',
-        null,
-        async () => {
-          const resp = await fetch(`https://api.imgchest.com/v1/post/${postId}/add`, {
-            method: 'POST',
-            body: chunkFormData,
-            headers: { 'Authorization': 'Bearer ' + token },
-          });
-
-          const headers = parseRateLimitHeaders(resp.headers);
-          updateImgchestRateLimit(headers);
-
-          const text = await resp.text();
-
-          if (text.trim().startsWith('<')) {
-            throw new Error('Unauthorized or API error - received HTML response');
-          }
-
-          let json: Record<string, unknown>;
-          try {
-            json = JSON.parse(text);
-          } catch {
-            throw new Error(`Failed to parse JSON: ${text.substring(0, 200)}`);
-          }
-
-          return { response: resp, result: json };
-        }
-      );
-
-      if (!response.ok) {
-        return new Response(JSON.stringify({
-          error: 'Imgchest API error',
-          status: response.status,
-          details: result,
-          chunk: i + 1,
-        }), {
-          headers: { 'Content-Type': 'application/json' },
-          status: response.status,
-        });
-      }
-
-      finalResult = result;
-      lastResponseHeaders = response.headers;
-
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      return new Response(JSON.stringify({
-        error: message,
-        chunk: i + 1,
-      }), {
-        headers: { 'Content-Type': 'application/json' },
-        status: 500,
-      });
-    }
-  }
-
-  if (privacy !== null || nsfw !== null) {
-    try {
-      const { response: updateResponse, result: updateResult } = await executeWithRateLimitRetry(
-        'imgchest',
-        null,
-        async () => {
-          const payload: Record<string, string> = {};
-          if (privacy !== null) payload.privacy = privacy;
-          if (nsfw !== null) payload.nsfw = nsfw;
-
-          const resp = await fetch(`https://api.imgchest.com/v1/post/${postId}`, {
-            method: 'PATCH',
-            body: JSON.stringify(payload),
-            headers: {
-              'Authorization': 'Bearer ' + token,
-              'Content-Type': 'application/json',
-              'Accept': 'application/json',
-            },
-          });
-
-          const headers = parseRateLimitHeaders(resp.headers);
-          updateImgchestRateLimit(headers);
-
-          const text = await resp.text();
-
-          if (text.trim().startsWith('<')) {
-            throw new Error('Unauthorized or API error - received HTML response');
-          }
-
-          let json: Record<string, unknown>;
-          try {
-            json = JSON.parse(text);
-          } catch {
-            throw new Error(`Failed to parse JSON: ${text.substring(0, 200)}`);
-          }
-
-          return { response: resp, result: json };
-        }
-      );
-
-      if (!updateResponse.ok) {
-        return new Response(JSON.stringify({
-          error: 'Failed to update post settings',
-          status: updateResponse.status,
-          details: updateResult,
-          imagesAdded: true,
-        }), {
-          headers: { 'Content-Type': 'application/json' },
-          status: updateResponse.status,
-        });
-      }
-
-      finalResult = updateResult;
-      lastResponseHeaders = updateResponse.headers;
-
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      return new Response(JSON.stringify({
-        error: `Images added but failed to update settings: ${message}`,
-        imagesAdded: true,
-      }), {
-        headers: { 'Content-Type': 'application/json' },
-        status: 500,
-      });
-    }
-  }
-
-  const responseHeaders = new Headers({ 'Content-Type': 'application/json' });
-  if (lastResponseHeaders) {
-    copyRateLimitHeaders(lastResponseHeaders, responseHeaders);
-  }
-
-  return new Response(JSON.stringify(finalResult), {
-    headers: responseHeaders,
-    status: 200,
+  return new Response(JSON.stringify(result.body), {
+    headers: { 'Content-Type': 'application/json', ...buildRateLimitHeaders(result.rateLimitHeaders) },
+    status: result.status,
   });
 }
 
