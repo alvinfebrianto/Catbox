@@ -35,25 +35,50 @@ describe('provider protocol', () => {
     expect(result.rateLimitHeaders?.remaining).toBe(9);
   });
 
-  test('lets a stateless provider use injected fetch and return a plain result', async () => {
-    const formData = new FormData();
-    formData.append('reqtype', 'fileupload');
-    const fetch = vi.fn(async () => new Response('https://files.catbox.moe/abc.png', {
-      status: 200,
-      headers: { 'X-RateLimit-Remaining': '7', 'X-RateLimit-Limit': '10' },
-    }));
+  test('lets catbox use plain input, injected fetch, and return a plain result', async () => {
+    const captured: { body?: FormData } = {};
+    const fetch = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      captured.body = init?.body as FormData;
+      return new Response('https://files.catbox.moe/abc.png', {
+        status: 200,
+        headers: { 'X-RateLimit-Remaining': '7', 'X-RateLimit-Limit': '10' },
+      });
+    });
 
-    const result = await uploadToCatbox(formData, { fetch });
+    const result = await uploadToCatbox({ reqtype: 'urlupload', url: 'https://example.com/cat.png' }, { fetch });
 
     expect(fetch).toHaveBeenCalledWith('https://catbox.moe/user/api.php', expect.objectContaining({
       method: 'POST',
-      body: formData,
+      body: expect.any(FormData),
     }));
+    expect(captured.body?.get('reqtype')).toBe('urlupload');
+    expect(captured.body?.get('url')).toBe('https://example.com/cat.png');
     expect(result).toEqual({
       status: 200,
       body: 'https://files.catbox.moe/abc.png',
       rateLimitHeaders: { limit: 10, remaining: 7 },
     });
+  });
+
+  test('lets catbox shape createalbum requests', async () => {
+    const captured: { body?: FormData } = {};
+    const fetch = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      captured.body = init?.body as FormData;
+      return new Response('abc123', { status: 200 });
+    });
+
+    const result = await uploadToCatbox({
+      reqtype: 'createalbum',
+      title: 'Trip',
+      desc: 'Images from the trip',
+      files: 'one.png two.png',
+    }, { fetch });
+
+    expect(captured.body?.get('reqtype')).toBe('createalbum');
+    expect(captured.body?.get('title')).toBe('Trip');
+    expect(captured.body?.get('desc')).toBe('Images from the trip');
+    expect(captured.body?.get('files')).toBe('one.png two.png');
+    expect(result).toEqual({ status: 200, body: 'abc123', rateLimitHeaders: {} });
   });
 });
 

@@ -281,7 +281,8 @@ describe('Imgchest upload handlers', () => {
     delete process.env.IMGCHEST_API_TOKEN;
     let capturedAuthHeader = '';
     setMockFetch(vi.fn((url, options) => {
-      capturedAuthHeader = (options as RequestInit).headers?.['Authorization'] || '';
+      const headers = (options as RequestInit).headers as Record<string, string> | undefined;
+      capturedAuthHeader = headers?.Authorization || '';
       return Promise.resolve(createMockResponse({
         data: { id: 'post123', link: 'https://imgchest.com/p/post123' }
       }, { headers: { 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': '59' } }) as unknown as Response);
@@ -303,7 +304,8 @@ describe('Imgchest upload handlers', () => {
     process.env.IMGCHEST_API_TOKEN = 'env-token';
     let capturedAuthHeader = '';
     setMockFetch(vi.fn((url, options) => {
-      capturedAuthHeader = (options as RequestInit).headers?.['Authorization'] || '';
+      const headers = (options as RequestInit).headers as Record<string, string> | undefined;
+      capturedAuthHeader = headers?.Authorization || '';
       return Promise.resolve(createMockResponse({
         data: { id: 'post123', link: 'https://imgchest.com/p/post123' }
       }, { headers: { 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': '59' } }) as unknown as Response);

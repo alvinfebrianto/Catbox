@@ -7,6 +7,7 @@ import {
   validateKekFiles,
   MAX_TOTAL_SIZE,
 } from './types';
+import { CatboxProviderInputError, CatboxUploadInput, readCatboxUploadInput, uploadToCatbox } from './providers/catbox';
 
 interface Env {
   IMGCHEST_API_TOKEN?: string;
@@ -18,18 +19,25 @@ const DEBUG = false;
 const MAX_REQUEST_BYTES = MAX_TOTAL_SIZE;
 
 async function handleCatboxUpload(req: Request, corsHeaders: Record<string, string>): Promise<Response> {
-  const formData = await req.formData();
-  const reqtype = formData.get('reqtype') as string;
+  let input: CatboxUploadInput;
+  try {
+    input = readCatboxUploadInput(await req.formData());
+  } catch (error) {
+    if (error instanceof CatboxProviderInputError) {
+      return new Response(JSON.stringify({ error: error.message }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 400,
+      });
+    }
 
-  const validReqTypes = ['fileupload'];
-  if (!validReqTypes.includes(reqtype)) {
-    return new Response(JSON.stringify({ error: 'Unknown request type' }), {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return new Response(JSON.stringify({ error: message }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 400,
+      status: 500,
     });
   }
 
-  const files = formData.getAll('fileToUpload') as File[];
+  const files = getCatboxFiles(input);
   if (files.length > 0) {
     const validation = validateFiles(files);
     if (!validation.ok) {
@@ -40,61 +48,27 @@ async function handleCatboxUpload(req: Request, corsHeaders: Record<string, stri
     }
   }
 
-  let lastError: Error | null = null;
+  try {
+    const result = await uploadToCatbox(input);
 
-  for (let attempt = 0; attempt <= DEFAULT_RETRY_CONFIG.maxRetries; attempt++) {
-    try {
-      const response = await fetch('https://catbox.moe/user/api.php', {
-        method: 'POST',
-        body: formData,
-        headers: {
-          'User-Agent': 'CatboxUploader/2.0',
-        },
-      });
-
-      const text = await response.text();
-
-      if (response.ok) {
-        return new Response(text, {
-          status: 200,
-          headers: corsHeaders,
-        });
-      }
-
-      if (response.status === 429) {
-        if (DEBUG) {
-          console.log(`[Catbox] Rate limited, attempt ${attempt + 1}`);
-        }
-        if (attempt < DEFAULT_RETRY_CONFIG.maxRetries) {
-          const waitMs = calculateExponentialBackoff(attempt);
-          await new Promise(resolve => setTimeout(resolve, waitMs));
-          continue;
-        }
-      }
-
-      return new Response(text, {
-        status: response.status,
-        headers: corsHeaders,
-      });
-
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
-      if (DEBUG) {
-        console.error(`[Catbox] Error on attempt ${attempt + 1}:`, lastError.message);
-      }
-
-      if (attempt < DEFAULT_RETRY_CONFIG.maxRetries) {
-        const waitMs = calculateExponentialBackoff(attempt);
-        await new Promise(resolve => setTimeout(resolve, waitMs));
-        continue;
-      }
-    }
+    return new Response(String(result.body), {
+      status: result.status >= 200 && result.status < 300 ? 200 : result.status,
+      headers: corsHeaders,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return new Response(JSON.stringify({ error: message }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
   }
+}
 
-  return new Response(JSON.stringify({ error: lastError?.message || 'Unknown error' }), {
-    status: 500,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-  });
+function getCatboxFiles(input: CatboxUploadInput): File[] {
+  if (input.reqtype !== 'fileupload') return [];
+
+  const entries = Array.isArray(input.fileToUpload) ? input.fileToUpload : [input.fileToUpload];
+  return entries.filter((entry): entry is File => entry instanceof File);
 }
 
 async function handleKekUpload(req: Request, corsHeaders: Record<string, string>, env: Env): Promise<Response> {

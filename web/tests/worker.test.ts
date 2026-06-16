@@ -181,14 +181,17 @@ describe('CORS and routing', () => {
     expect(response.status).toBe(404);
   });
 
-  test('POST without X-Proxy-Auth returns 401', async () => {
+  test('POST without X-Proxy-Auth still reaches the catbox host boundary', async () => {
+    setMockFetch(vi.fn(() =>
+      Promise.resolve(createMockResponse('https://files.catbox.moe/abc123.png'))
+    ));
+
     const response = await workerDefault.fetch(
       createRequestWithoutAuth('/upload/catbox', { method: 'POST', body: createFormData({ reqtype: 'fileupload' }) }),
       createTestEnv()
     );
-    expect(response.status).toBe(401);
-    const json = await response.json() as { error: string };
-    expect(json.error).toBe('Unauthorized');
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('https://files.catbox.moe/abc123.png');
   });
 });
 
@@ -216,7 +219,11 @@ describe('Catbox proxy', () => {
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe(TEST_ORIGIN);
   });
 
-  test('rejects urlupload reqtype (SSRF prevention)', async () => {
+  test('supports urlupload reqtype', async () => {
+    setMockFetch(vi.fn(() =>
+      Promise.resolve(createMockResponse('https://files.catbox.moe/url123.png'))
+    ));
+
     const formData = createFormData({
       reqtype: 'urlupload',
       url: 'https://example.com/image.png',
@@ -225,12 +232,16 @@ describe('Catbox proxy', () => {
       createRequest('/upload/catbox', { method: 'POST', body: formData }),
       createTestEnv()
     );
-    expect(response.status).toBe(400);
-    const json = await response.json() as { error: string };
-    expect(json.error).toBe('Unknown request type');
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('https://files.catbox.moe/url123.png');
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe(TEST_ORIGIN);
   });
 
-  test('rejects createalbum reqtype (SSRF prevention)', async () => {
+  test('supports createalbum reqtype', async () => {
+    setMockFetch(vi.fn(() =>
+      Promise.resolve(createMockResponse('album123'))
+    ));
+
     const formData = createFormData({
       reqtype: 'createalbum',
       files: 'abc.png def.png',
@@ -239,9 +250,9 @@ describe('Catbox proxy', () => {
       createRequest('/upload/catbox', { method: 'POST', body: formData }),
       createTestEnv()
     );
-    expect(response.status).toBe(400);
-    const json = await response.json() as { error: string };
-    expect(json.error).toBe('Unknown request type');
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('album123');
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe(TEST_ORIGIN);
   });
 });
 
@@ -366,7 +377,7 @@ describe('Imgchest proxy', () => {
 });
 
 describe('Rate limiter not configured', () => {
-  test('returns 500 when PROXY_AUTH_TOKEN is missing', async () => {
+  test('returns 500 when RATE_LIMITER binding is missing', async () => {
     const formData = new FormData();
     formData.append('images[]', new File(['test'], 'test.png', { type: 'image/png' }));
 
@@ -377,6 +388,6 @@ describe('Rate limiter not configured', () => {
 
     expect(response.status).toBe(500);
     const json = await response.json() as { error: string };
-    expect(json.error).toBe('Server misconfigured');
+    expect(json.error).toBe('Rate limiter not configured');
   });
 });

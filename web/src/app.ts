@@ -130,7 +130,7 @@ class ImageUploader {
     this.titleGroup = document.getElementById('titleGroup') as HTMLElement;
     this.descriptionGroup = document.getElementById('descriptionGroup') as HTMLElement;
     this.imgchestOptions = document.getElementById('imgchestOptions') as HTMLElement;
-    this.imgchestPrivacySelect = document.getElementById('imgchestPrivacy') as HTMLSelectElement;
+    this.imgchestPrivacySelect = document.getElementById('imgchestPrivacy') as unknown as HTMLSelectElement;
     this.imgchestNsfwCheckbox = document.getElementById('imgchestNsfw') as HTMLInputElement;
 
     this.providerSelect.value = this.provider;

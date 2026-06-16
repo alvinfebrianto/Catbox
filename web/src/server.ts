@@ -20,6 +20,7 @@ import {
   createRateLimitEntry,
   validateKekFiles,
 } from './types';
+import { CatboxProviderInputError, readCatboxUploadInput, uploadToCatbox } from './providers/catbox';
 
 const PORT = 3000;
 const TEMP_DIR = 'C:\\Users\\lenovo\\AppData\\Local\\Temp';
@@ -362,66 +363,27 @@ async function isSxcuGlobalError(response: Response): Promise<boolean> {
 }
 
 async function handleCatboxUpload(req: Request): Promise<Response> {
-  const formData = await req.formData();
-  const reqtype = formData.get('reqtype') as string;
+  try {
+    const input = readCatboxUploadInput(await req.formData());
+    const result = await uploadToCatbox(input);
 
-  const validReqTypes = ['fileupload', 'urlupload', 'createalbum'];
-  if (!validReqTypes.includes(reqtype)) {
-    return new Response(JSON.stringify({ error: 'Unknown request type' }), {
+    return new Response(String(result.body), {
+      status: result.status >= 200 && result.status < 300 ? 200 : result.status,
+    });
+  } catch (error) {
+    if (error instanceof CatboxProviderInputError) {
+      return new Response(JSON.stringify({ error: error.message }), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 400,
+      });
+    }
+
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return new Response(JSON.stringify({ error: message }), {
       headers: { 'Content-Type': 'application/json' },
-      status: 400,
+      status: 500,
     });
   }
-
-  let lastError: Error | null = null;
-
-  for (let attempt = 0; attempt <= DEFAULT_RETRY_CONFIG.maxRetries; attempt++) {
-    try {
-      const response = await fetch('https://catbox.moe/user/api.php', {
-        method: 'POST',
-        body: formData,
-        headers: {
-          'User-Agent': 'CatboxUploader/2.0',
-        },
-      });
-
-      const text = await response.text();
-
-      if (response.ok) {
-        return new Response(text, { status: 200 });
-      }
-
-      if (response.status === 429) {
-        if (DEBUG) {
-          console.log(`[Catbox] Rate limited, attempt ${attempt + 1}`);
-        }
-        if (attempt < DEFAULT_RETRY_CONFIG.maxRetries) {
-          const waitMs = calculateExponentialBackoff(attempt);
-          await new Promise(resolve => setTimeout(resolve, waitMs));
-          continue;
-        }
-      }
-
-      return new Response(text, { status: response.status });
-
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
-      if (DEBUG) {
-        console.error(`[Catbox] Error on attempt ${attempt + 1}:`, lastError.message);
-      }
-
-      if (attempt < DEFAULT_RETRY_CONFIG.maxRetries) {
-        const waitMs = calculateExponentialBackoff(attempt);
-        await new Promise(resolve => setTimeout(resolve, waitMs));
-        continue;
-      }
-    }
-  }
-
-  return new Response(JSON.stringify({ error: lastError?.message || 'Unknown error' }), {
-    status: 500,
-    headers: { 'Content-Type': 'application/json' },
-  });
 }
 
 async function handleKekPost(req: Request): Promise<Response> {
