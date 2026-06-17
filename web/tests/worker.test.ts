@@ -28,7 +28,7 @@ function createMockDurableObject(): MockDurableObject {
     idFromName: ((name: string) => {
       return { toString: () => name } as unknown as DurableObjectId;
     }) as (name: string) => DurableObjectId,
-    get: ((_id: DurableObjectId) => stub) as (id: DurableObjectId) => DurableObjectStub,
+    get: ((_id: DurableObjectId) => stub) as unknown as (id: DurableObjectId) => DurableObjectStub,
   };
 
   return { namespace: namespace as unknown as DurableObjectNamespace, fetchMock };

@@ -14,7 +14,7 @@ import { MemoryRateLimitStore } from '../src/rate-limit/engine';
 
 const originalEnv = { ...process.env };
 
-function makeFormData(entries: Record<string, string | Blob | string[]>): FormData {
+function makeFormData(entries: Record<string, string | Blob | Array<string | Blob>>): FormData {
   const form = new FormData();
   for (const [key, value] of Object.entries(entries)) {
     if (Array.isArray(value)) {
@@ -288,7 +288,7 @@ describe('Kek upload handler', () => {
     expect(response.status).toBe(200);
     expect(fetch).toHaveBeenCalledTimes(2);
 
-    const [firstUrl, firstInit] = fetch.mock.calls[0] as [string, RequestInit];
+    const [firstUrl, firstInit] = fetch.mock.calls[0] as unknown as [string, RequestInit];
     expect(firstUrl).toBe('https://kek.sh/api/v1/posts');
     expect((firstInit.headers as Record<string, string>)['x-kek-auth']).toBe('env-key');
   });
