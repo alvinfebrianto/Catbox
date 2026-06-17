@@ -1,6 +1,7 @@
-import { Provider, UploadResult, ALLOWED_EXTENSIONS, IMGCHEST_ALLOWED_EXTENSIONS, KEK_ALLOWED_EXTENSIONS, validateImgchestFiles } from './types';
-import { CatboxUploadInput, KekUploadInput, UploadObserver } from './upload/contracts';
+import { Provider, UploadResult, ALLOWED_EXTENSIONS, IMGCHEST_ALLOWED_EXTENSIONS, KEK_ALLOWED_EXTENSIONS } from './types';
+import { CatboxUploadInput, ImgchestUploadInput, KekUploadInput, UploadObserver } from './upload/contracts';
 import { uploadToCatbox as runCatboxSequencer } from './upload/catbox';
+import { uploadToImgchest as runImgchestSequencer } from './upload/imgchest';
 import { uploadToKek as runKekSequencer } from './upload/kek';
 
 declare const API_BASE_URL: string;
@@ -771,10 +772,9 @@ class ImageUploader {
     }
   }
 
-  private uploadToImgchest(results: UploadResult[]): void {
+  private uploadToImgchest(_results: UploadResult[]): void {
     const anonymous = (document.getElementById('anonymous') as HTMLInputElement).checked;
     const postId = this.postIdInput.value.trim();
-    const title = this.titleInput.value;
 
     if (postId && anonymous) {
       this.showError('Cannot add images to anonymous posts. Anonymous posts do not support adding images after creation.');
@@ -783,290 +783,20 @@ class ImageUploader {
       return;
     }
 
-    const validation = validateImgchestFiles(this.files);
-    if (!validation.ok) {
-      this.showError(validation.error || 'Invalid files');
-      this.setLoading(false);
-      this.progressDiv.style.display = 'none';
-      return;
-    }
-
-    const totalFiles = this.files.length;
-    let filesToUpload = this.files.slice();
-
-    if (anonymous) {
-      filesToUpload = filesToUpload.slice(0, 20);
-    }
-
-    if (anonymous) {
-      this.uploadImgchestBatch(postId, filesToUpload, results, totalFiles, anonymous);
-    } else if (postId) {
-      this.uploadImgchestProgressiveAddToPost(postId, filesToUpload, results, totalFiles);
-    } else {
-      this.uploadImgchestProgressive(filesToUpload, results, totalFiles, title);
-    }
-  }
-
-  private uploadImgchestBatch(postId: string, files: File[], results: UploadResult[], totalFiles: number, anonymous: boolean): void {
-    const title = this.titleInput.value;
-    const privacy = this.imgchestPrivacySelect?.value || 'hidden';
-    const nsfw = this.imgchestNsfwCheckbox?.checked ?? true;
-
-    this.updateProgress(0, postId ? 'Adding images...' : 'Creating post...');
-
-    const formData = new FormData();
-    if (title) formData.append('title', title);
-    formData.append('privacy', privacy);
-    formData.append('nsfw', nsfw ? 'true' : 'false');
-    if (anonymous) formData.append('anonymous', '1');
-
-    for (const file of files) {
-      formData.append('images[]', file);
-    }
-
-    const url = postId
-      ? this.apiBaseUrl + '/upload/imgchest/post/' + postId + '/add'
-      : this.apiBaseUrl + '/upload/imgchest/post';
-
-    const fetchOptions: RequestInit = { method: 'POST', body: formData, headers: { ...this.getAuthHeaders() } };
-
-    const customToken = this.imgchestApiKeyInput?.value.trim();
-    if (customToken) {
-      (fetchOptions.headers as Record<string, string>)['Authorization'] = 'Bearer ' + customToken;
-    }
-
-    fetch(url, fetchOptions)
-      .then(response => response.text())
-      .then(text => {
-        try {
-          const data = JSON.parse(text);
-          if (data.error) {
-            let errorMsg = data.error;
-            if (data.details) {
-              errorMsg += ': ' + (typeof data.details === 'object' ? JSON.stringify(data.details) : data.details);
-            }
-            throw new Error(errorMsg);
-          }
-
-          const postResult: UploadResult = { type: 'success', url: 'https://imgchest.com/p/' + data.data.id, isPost: true };
-          results.push(postResult);
-          this.addIncrementalResult(postResult, results.length - 1);
-
-          let newImages: Array<{ link: string }>;
-          if (postId) {
-            const existingCount = data.data.image_count - files.length;
-            newImages = data.data.images.slice(existingCount);
-          } else {
-            newImages = data.data.images;
-          }
-
-          for (const img of newImages) {
-            const imgResult: UploadResult = { type: 'success', url: img.link };
-            results.push(imgResult);
-            this.addIncrementalResult(imgResult, results.length - 1);
-          }
-
-          this.updateProgress(100, 'Done!');
-          this.displayResults(results, totalFiles);
-        } catch (e) {
-          results.push({ type: 'error', message: 'Failed to upload: ' + (e as Error).message });
-          this.updateProgress(100, 'Done!');
-          this.displayResults(results, totalFiles);
-        }
-      })
-      .catch(error => {
-        results.push({ type: 'error', message: 'Failed to upload: ' + error.message });
-        this.updateProgress(100, 'Done!');
-        this.displayResults(results, totalFiles);
-      });
-  }
-
-  private uploadImgchestProgressiveAddToPost(postId: string, files: File[], results: UploadResult[], totalFiles: number): void {
-    let completedFiles = 0;
-    let postResultAdded = false;
-    const privacy = this.imgchestPrivacySelect?.value || 'hidden';
-    const nsfw = this.imgchestNsfwCheckbox?.checked ?? true;
-
-    const uploadNextFile = (index: number): void => {
-      if (index >= files.length) {
-        this.updateProgress(100, 'Done!');
-        this.displayResults(results, totalFiles);
-        return;
-      }
-
-      const file = files[index];
-      const isLastFile = index === files.length - 1;
-      this.updateProgress((index / files.length) * 100, 'Adding ' + file.name + ' to post...');
-
-      const formData = new FormData();
-      formData.append('images[]', file);
-      if (isLastFile) {
-        formData.append('privacy', privacy);
-        formData.append('nsfw', nsfw ? 'true' : 'false');
-      }
-
-      const url = this.apiBaseUrl + '/upload/imgchest/post/' + postId + '/add';
-
-      const fetchOptions: RequestInit = { method: 'POST', body: formData, headers: { ...this.getAuthHeaders() } };
-
-      const customToken = this.imgchestApiKeyInput?.value.trim();
-      if (customToken) {
-        (fetchOptions.headers as Record<string, string>)['Authorization'] = 'Bearer ' + customToken;
-      }
-
-      fetch(url, fetchOptions)
-        .then(response => response.text())
-        .then(text => {
-          try {
-            const data = JSON.parse(text);
-            if (data.error) {
-              let errorMsg = data.error;
-              if (data.details) {
-                errorMsg += ': ' + (typeof data.details === 'object' ? JSON.stringify(data.details) : data.details);
-              }
-              throw new Error(errorMsg);
-            }
-
-            if (!postResultAdded) {
-              const postResult: UploadResult = { type: 'success', url: 'https://imgchest.com/p/' + data.data.id, isPost: true };
-              results.push(postResult);
-              this.addIncrementalResult(postResult, results.length - 1);
-              postResultAdded = true;
-            }
-
-            const newImages = data.data.images.slice(-1);
-            for (const img of newImages) {
-              const imgResult: UploadResult = { type: 'success', url: img.link };
-              results.push(imgResult);
-              this.addIncrementalResult(imgResult, results.length - 1);
-            }
-
-            completedFiles++;
-            this.updateProgress((completedFiles / files.length) * 100, 'Added ' + completedFiles + ' of ' + files.length);
-            uploadNextFile(index + 1);
-          } catch (e) {
-            const errResult: UploadResult = { type: 'error', message: 'Failed to add ' + file.name + ': ' + (e as Error).message };
-            results.push(errResult);
-            this.addIncrementalResult(errResult, results.length - 1);
-            completedFiles++;
-            uploadNextFile(index + 1);
-          }
-        })
-        .catch(error => {
-          const errResult: UploadResult = { type: 'error', message: 'Failed to add ' + file.name + ': ' + error.message };
-          results.push(errResult);
-          this.addIncrementalResult(errResult, results.length - 1);
-          completedFiles++;
-          uploadNextFile(index + 1);
-        });
+    const input: ImgchestUploadInput = {
+      apiBaseUrl: this.apiBaseUrl,
+      files: this.files,
+      urls: [],
+      authHeaders: this.getAuthHeaders(),
+      title: this.titleInput.value,
+      postId,
+      anonymous,
+      privacy: this.imgchestPrivacySelect?.value || 'hidden',
+      nsfw: this.imgchestNsfwCheckbox?.checked ?? true,
+      apiToken: this.imgchestApiKeyInput?.value.trim(),
     };
-
-    uploadNextFile(0);
-  }
-
-  private uploadImgchestProgressive(files: File[], results: UploadResult[], totalFiles: number, title: string): void {
-    let currentPostId: string | null = null;
-    let completedFiles = 0;
-    const privacy = this.imgchestPrivacySelect?.value || 'hidden';
-    const nsfw = this.imgchestNsfwCheckbox?.checked ?? true;
-
-    const uploadNextFile = (index: number): void => {
-      if (index >= files.length) {
-        this.updateProgress(100, 'Done!');
-        this.displayResults(results, totalFiles);
-        return;
-      }
-
-      const file = files[index];
-      const isFirst = index === 0;
-      this.updateProgress((index / files.length) * 100, 'Uploading ' + file.name + '...');
-
-      const formData = new FormData();
-      formData.append('images[]', file);
-
-      if (isFirst) {
-        if (title) formData.append('title', title);
-        formData.append('privacy', privacy);
-        formData.append('nsfw', nsfw ? 'true' : 'false');
-      }
-
-      const url = isFirst
-        ? this.apiBaseUrl + '/upload/imgchest/post'
-        : this.apiBaseUrl + '/upload/imgchest/post/' + currentPostId + '/add';
-
-      const fetchOptions: RequestInit = { method: 'POST', body: formData, headers: { ...this.getAuthHeaders() } };
-
-      const customToken = this.imgchestApiKeyInput?.value.trim();
-      if (customToken) {
-        (fetchOptions.headers as Record<string, string>)['Authorization'] = 'Bearer ' + customToken;
-      }
-
-      fetch(url, fetchOptions)
-        .then(response => response.text())
-        .then(text => {
-          try {
-            const data = JSON.parse(text);
-            if (data.error) {
-              let errorMsg = data.error;
-              if (data.details) {
-                errorMsg += ': ' + (typeof data.details === 'object' ? JSON.stringify(data.details) : data.details);
-              }
-              throw new Error(errorMsg);
-            }
-
-            if (isFirst) {
-              currentPostId = data.data.id;
-              const postResult: UploadResult = { type: 'success', url: 'https://imgchest.com/p/' + data.data.id, isPost: true };
-              results.push(postResult);
-              this.addIncrementalResult(postResult, results.length - 1);
-            }
-
-            let newImages: Array<{ link: string }>;
-            if (!isFirst) {
-              newImages = data.data.images.slice(-1);
-            } else {
-              newImages = data.data.images;
-            }
-
-            for (const img of newImages) {
-              const imgResult: UploadResult = { type: 'success', url: img.link };
-              results.push(imgResult);
-              this.addIncrementalResult(imgResult, results.length - 1);
-            }
-
-            completedFiles++;
-            this.updateProgress((completedFiles / files.length) * 100, 'Uploaded ' + completedFiles + ' of ' + files.length);
-            uploadNextFile(index + 1);
-          } catch (e) {
-            const errResult: UploadResult = { type: 'error', message: 'Failed to upload ' + file.name + ': ' + (e as Error).message };
-            results.push(errResult);
-            this.addIncrementalResult(errResult, results.length - 1);
-            completedFiles++;
-
-            if (currentPostId || index > 0) {
-              uploadNextFile(index + 1);
-            } else {
-              this.updateProgress(100, 'Done!');
-              this.displayResults(results, totalFiles);
-            }
-          }
-        })
-        .catch(error => {
-          const errResult: UploadResult = { type: 'error', message: 'Failed to upload ' + file.name + ': ' + error.message };
-          results.push(errResult);
-          this.addIncrementalResult(errResult, results.length - 1);
-          completedFiles++;
-
-          if (currentPostId || index > 0) {
-            uploadNextFile(index + 1);
-          } else {
-            this.updateProgress(100, 'Done!');
-            this.displayResults(results, totalFiles);
-          }
-        });
-    };
-
-    uploadNextFile(0);
+    const totalItems = this.files.length;
+    runImgchestSequencer(input, this.makeObserver(totalItems), window.fetch.bind(window));
   }
 
   private updateProgress(percent: number, text: string): void {
