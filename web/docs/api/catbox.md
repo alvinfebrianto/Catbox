@@ -1,4 +1,4 @@
-# API
+# CATBOX API
 
 The API is located at https://catbox.moe/user/api.php
 
