@@ -1,4 +1,6 @@
 import { Provider, UploadResult, ALLOWED_EXTENSIONS, IMGCHEST_ALLOWED_EXTENSIONS, IMGCHEST_MAX_FILE_SIZE, KEK_ALLOWED_EXTENSIONS, validateImgchestFiles, validateKekFiles } from './types';
+import { CatboxUploadInput, UploadObserver } from './upload/contracts';
+import { uploadToCatbox as runCatboxSequencer } from './upload/catbox';
 
 declare const API_BASE_URL: string;
 
@@ -485,7 +487,7 @@ class ImageUploader {
     try {
       switch (this.provider) {
         case 'catbox':
-          this.uploadToCatbox(results, urls);
+          this.uploadToCatbox(urls);
           break;
         case 'sxcu':
           this.uploadToSxcu(results);
@@ -505,137 +507,29 @@ class ImageUploader {
     }
   }
 
-  private uploadToCatbox(results: UploadResult[], urls: string[]): void {
-    const title = this.titleInput.value;
-    const description = (document.getElementById('description') as HTMLInputElement).value;
-    const totalItems = this.files.length + urls.length;
-    let completedItems = 0;
-
-    const uploadFile = (file: File, callback: () => void): void => {
-      this.updateProgress((completedItems / totalItems) * 100, 'Uploading ' + file.name + '...');
-
-      const formData = new FormData();
-      formData.append('reqtype', 'fileupload');
-      formData.append('fileToUpload', file);
-
-      fetch(this.apiBaseUrl + '/upload/catbox', { method: 'POST', body: formData, headers: this.getAuthHeaders() })
-        .then(response => {
-          if (!response.ok) throw new Error('Upload failed: ' + response.statusText);
-          return response.text();
-        })
-        .then(url => {
-          const result: UploadResult = { type: 'success', url: url.trim() };
-          results.push(result);
-          this.addIncrementalResult(result, results.length - 1);
-          completedItems++;
-          callback();
-        })
-        .catch(error => {
-          const result: UploadResult = { type: 'error', message: 'Failed to upload ' + file.name + ': ' + error.message };
-          results.push(result);
-          this.addIncrementalResult(result, results.length - 1);
-          completedItems++;
-          callback();
-        });
+  private makeObserver(totalItems: number): UploadObserver {
+    return {
+      onResult: (result, index) => this.addIncrementalResult(result, index),
+      onProgress: (percent, label) => this.updateProgress(percent, label),
+      onRateLimitWait: () => {},
+      onDone: (results) => this.displayResults(results, totalItems),
     };
-
-    const uploadUrl = (url: string, callback: () => void): void => {
-      this.updateProgress(((this.files.length + completedItems) / totalItems) * 100, 'Uploading ' + url + '...');
-
-      const formData = new FormData();
-      formData.append('reqtype', 'urlupload');
-      formData.append('url', url);
-
-      fetch(this.apiBaseUrl + '/upload/catbox', { method: 'POST', body: formData, headers: this.getAuthHeaders() })
-        .then(response => {
-          if (!response.ok) throw new Error('URL upload failed: ' + response.statusText);
-          return response.text();
-        })
-        .then(uploadedUrl => {
-          const result: UploadResult = { type: 'success', url: uploadedUrl.trim() };
-          results.push(result);
-          this.addIncrementalResult(result, results.length - 1);
-          completedItems++;
-          callback();
-        })
-        .catch(error => {
-          const result: UploadResult = { type: 'error', message: 'Failed to upload ' + url + ': ' + error.message };
-          results.push(result);
-          this.addIncrementalResult(result, results.length - 1);
-          completedItems++;
-          callback();
-        });
-    };
-
-    const createAlbum = (): void => {
-      this.updateProgress(95, 'Creating album...');
-
-      const uploadedUrls = results.filter(r => r.type === 'success').map(r => r.url!);
-
-      if (uploadedUrls.length > 0) {
-        const fileNames = uploadedUrls.map(url => {
-          try {
-            const uri = new URL(url);
-            return uri.pathname.split('/').pop() || url;
-          } catch {
-            return url;
-          }
-        });
-
-        const albumFormData = new FormData();
-        albumFormData.append('reqtype', 'createalbum');
-        albumFormData.append('title', title);
-        albumFormData.append('desc', description);
-        albumFormData.append('files', fileNames.join(' '));
-
-        fetch(this.apiBaseUrl + '/upload/catbox', { method: 'POST', body: albumFormData, headers: this.getAuthHeaders() })
-          .then(response => {
-            if (response.ok) return response.text();
-            throw new Error('Album creation failed');
-          })
-          .then(albumCode => {
-            const albumUrl = albumCode.indexOf('http') === 0 ? albumCode : 'https://catbox.moe/album/' + albumCode;
-            const albumResult: UploadResult = { type: 'success', url: albumUrl, isAlbum: true };
-            results.push(albumResult);
-            this.addIncrementalResult(albumResult, results.length - 1);
-            this.updateProgress(100, 'Done!');
-            this.displayResults(results, totalItems);
-          })
-          .catch(error => {
-            const errorResult: UploadResult = { type: 'error', message: 'Failed to create album: ' + error.message };
-            results.push(errorResult);
-            this.addIncrementalResult(errorResult, results.length - 1);
-            this.updateProgress(100, 'Done!');
-            this.displayResults(results, totalItems);
-          });
-      } else {
-        this.updateProgress(100, 'Done!');
-        this.displayResults(results, totalItems);
-      }
-    };
-
-    const shouldCreateAlbum = (document.getElementById('createAlbum') as HTMLInputElement).checked;
-
-    const processNext = (): void => {
-      if (completedItems >= this.files.length + urls.length) {
-        if (shouldCreateAlbum) {
-          createAlbum();
-        } else {
-          this.updateProgress(100, 'Done!');
-          this.displayResults(results, totalItems);
-        }
-        return;
-      }
-
-      if (completedItems < this.files.length) {
-        uploadFile(this.files[completedItems], processNext);
-      } else {
-        uploadUrl(urls[completedItems - this.files.length], processNext);
-      }
-    };
-
-    processNext();
   }
+
+  private uploadToCatbox(urls: string[]): void {
+    const input: CatboxUploadInput = {
+      apiBaseUrl: this.apiBaseUrl,
+      files: this.files,
+      urls,
+      authHeaders: this.getAuthHeaders(),
+      title: this.titleInput.value,
+      description: (document.getElementById('description') as HTMLInputElement).value,
+      createAlbum: (document.getElementById('createAlbum') as HTMLInputElement).checked,
+    };
+    const totalItems = this.files.length + urls.length;
+    runCatboxSequencer(input, this.makeObserver(totalItems), window.fetch.bind(window));
+  }
+
 
   private uploadToKek(results: UploadResult[], urls: string[]): void {
     if (this.files.length > 0) {
