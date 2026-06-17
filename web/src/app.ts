@@ -1,8 +1,9 @@
 import { Provider, UploadResult, ALLOWED_EXTENSIONS, IMGCHEST_ALLOWED_EXTENSIONS, KEK_ALLOWED_EXTENSIONS } from './types';
-import { CatboxUploadInput, ImgchestUploadInput, KekUploadInput, UploadObserver } from './upload/contracts';
+import { CatboxUploadInput, ImgchestUploadInput, KekUploadInput, SxcuUploadInput, UploadObserver } from './upload/contracts';
 import { uploadToCatbox as runCatboxSequencer } from './upload/catbox';
 import { uploadToImgchest as runImgchestSequencer } from './upload/imgchest';
 import { uploadToKek as runKekSequencer } from './upload/kek';
+import { uploadToSxcu as runSxcuSequencer } from './upload/sxcu';
 
 declare const API_BASE_URL: string;
 
@@ -10,13 +11,6 @@ interface ExtendedFile extends Omit<File, 'webkitRelativePath'> {
   webkitRelativePath?: string;
   mozRelativePath?: string;
   path?: string;
-}
-
-interface RateLimitState {
-  limit: number;
-  remaining: number;
-  reset: number;
-  bucket: string | null;
 }
 
 function createSafeLink(url: string): HTMLAnchorElement {
@@ -509,13 +503,35 @@ class ImageUploader {
     }
   }
 
-  private makeObserver(totalItems: number): UploadObserver {
+  private makeObserver(totalItems: number, onRateLimitWait: (secondsRemaining: number) => void = () => {}): UploadObserver {
     return {
       onResult: (result, index) => this.addIncrementalResult(result, index),
       onProgress: (percent, label) => this.updateProgress(percent, label),
-      onRateLimitWait: () => {},
+      onRateLimitWait,
       onDone: (results) => this.displayResults(results, totalItems),
     };
+  }
+
+  private updateRateLimitNotice(secondsRemaining: number): void {
+    const existingNotice = this.resultsContent.querySelector('#rate-limit-notice');
+
+    if (secondsRemaining <= 0) {
+      if (existingNotice) existingNotice.remove();
+      return;
+    }
+
+    const text = 'Rate limited! Waiting ' + secondsRemaining + 's before next upload...';
+    if (existingNotice) {
+      existingNotice.textContent = text;
+      return;
+    }
+
+    const rateLimitNotice = document.createElement('div');
+    rateLimitNotice.className = 'result-item warning';
+    rateLimitNotice.textContent = text;
+    rateLimitNotice.id = 'rate-limit-notice';
+    this.resultsContent.insertBefore(rateLimitNotice, this.resultsContent.firstChild);
+    rateLimitNotice.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
   private uploadToCatbox(urls: string[]): void {
@@ -546,231 +562,25 @@ class ImageUploader {
     runKekSequencer(input, this.makeObserver(totalItems), window.fetch.bind(window));
   }
 
-  private uploadToSxcu(results: UploadResult[]): void {
-    const createCollection = (document.getElementById('createCollection') as HTMLInputElement).checked;
-    const isPrivate = (document.getElementById('sxcuPrivate') as HTMLInputElement).checked;
-    const title = this.titleInput.value;
-    const description = (document.getElementById('description') as HTMLInputElement).value;
-    let collectionId = '';
-    let collectionToken = '';
-    const totalFiles = this.files.length;
-    let completedFiles = 0;
-    let filesToUpload = [...Array(totalFiles).keys()];
-
-    const rateLimitState: RateLimitState = {
-      limit: 5,
-      remaining: 5,
-      reset: 0,
-      bucket: null
+  private uploadToSxcu(_results: UploadResult[]): void {
+    const input: SxcuUploadInput = {
+      apiBaseUrl: this.apiBaseUrl,
+      files: this.files,
+      urls: [],
+      authHeaders: this.getAuthHeaders(),
+      title: this.titleInput.value,
+      description: (document.getElementById('description') as HTMLInputElement).value,
+      createCollection: (document.getElementById('createCollection') as HTMLInputElement).checked,
+      private: (document.getElementById('sxcuPrivate') as HTMLInputElement).checked,
     };
 
-    const parseRateLimitHeaders = (headers: Headers): RateLimitState => ({
-      limit: parseInt(headers.get('X-RateLimit-Limit') || '5') || 5,
-      remaining: parseInt(headers.get('X-RateLimit-Remaining') || '0') || 0,
-      reset: parseInt(headers.get('X-RateLimit-Reset') || '0') || 0,
-      bucket: headers.get('X-RateLimit-Bucket') || null
-    });
-
-    const getWaitSeconds = (): number => {
-      if (rateLimitState.reset <= 0) return 60;
-      const now = Math.floor(Date.now() / 1000);
-      const wait = rateLimitState.reset - now + 1;
-      return wait > 0 ? wait : 1;
-    };
-
-    const uploadFile = (fileIndex: number, callback: (err: Error | null, success: boolean) => void): void => {
-      const file = this.files[fileIndex];
-      this.updateProgress((completedFiles / totalFiles) * 100, 'Uploading ' + file.name + '...');
-
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('noembed', 'true');
-
-      if (collectionId) formData.append('collection', collectionId);
-      if (collectionToken) formData.append('collection_token', collectionToken);
-
-      fetch(this.apiBaseUrl + '/upload/sxcu/files', {
-        method: 'POST',
-        body: formData,
-        headers: { ...this.getAuthHeaders(), 'User-Agent': 'sxcuUploader/1.0' }
-      })
-        .then(response => {
-          const newRateLimit = parseRateLimitHeaders(response.headers);
-          rateLimitState.limit = newRateLimit.limit;
-          rateLimitState.remaining = newRateLimit.remaining;
-          if (newRateLimit.reset > 0) rateLimitState.reset = newRateLimit.reset;
-          if (newRateLimit.bucket) rateLimitState.bucket = newRateLimit.bucket;
-
-          return response.json().then((rawData: unknown) => {
-            const data = rawData as { url?: string; error?: { message?: string } | string; message?: string; rateLimitReset?: string; rateLimitResetAfter?: string };
-            if (response.status === 429) {
-              if (data.rateLimitReset) {
-                rateLimitState.reset = parseInt(data.rateLimitReset);
-              } else if (data.rateLimitResetAfter) {
-                rateLimitState.reset = Math.floor(Date.now() / 1000) + parseFloat(data.rateLimitResetAfter);
-              }
-              throw new Error('Rate limit exceeded');
-            }
-
-            if (!response.ok) {
-              let msg = data.message || (typeof data.error === 'object' ? data.error?.message : data.error) || response.statusText;
-              if (typeof msg === 'object') msg = JSON.stringify(msg);
-              throw new Error('Upload failed: ' + msg);
-            }
-            return data;
-          });
-        })
-        .then(data => {
-          results.push({ type: 'success', url: data.url });
-          completedFiles++;
-          callback(null, true);
-        })
-        .catch(error => {
-          callback(error, false);
-        });
-    };
-
-    const processNextBurst = (): void => {
-      if (filesToUpload.length === 0) {
-        this.updateProgress(100, 'Done!');
-        this.displayResults(results, totalFiles);
-        return;
-      }
-
-      let burstSize = Math.min(4, filesToUpload.length);
-      const currentRemaining = rateLimitState.remaining;
-
-      if (currentRemaining < burstSize && currentRemaining > 0) {
-        burstSize = currentRemaining;
-      }
-
-      const indicesToUpload = filesToUpload.slice(0, burstSize);
-      let rateLimited = false;
-      let uploadedCount = 0;
-      let burstProcessedCount = 0;
-
-      const uploadNext = (idx: number): void => {
-        if (idx >= indicesToUpload.length) {
-          if (rateLimited) {
-            if (burstProcessedCount > 0) {
-              filesToUpload = filesToUpload.slice(burstProcessedCount);
-            }
-            let waitSeconds = getWaitSeconds();
-
-            const updateCountdown = () => {
-              if (waitSeconds <= 0) {
-                const rateLimitNotice = this.resultsContent.querySelector('#rate-limit-notice');
-                if (rateLimitNotice) rateLimitNotice.remove();
-                processNextBurst();
-                return;
-              }
-
-              const msg = 'Rate limited. Waiting ' + waitSeconds + 's...';
-              this.updateProgress((completedFiles / totalFiles) * 100, msg);
-
-              const rateLimitNotice = this.resultsContent.querySelector('#rate-limit-notice');
-              if (rateLimitNotice) {
-                rateLimitNotice.textContent = 'Rate limited! Waiting ' + waitSeconds + 's before next upload...';
-              }
-
-              waitSeconds--;
-              setTimeout(updateCountdown, 1000);
-            };
-
-            updateCountdown();
-          } else {
-            const rateLimitNotice = this.resultsContent.querySelector('#rate-limit-notice');
-            if (rateLimitNotice) rateLimitNotice.remove();
-            filesToUpload = filesToUpload.slice(burstSize);
-            if (filesToUpload.length > 0) {
-              setTimeout(processNextBurst, 200);
-            } else {
-              this.updateProgress(100, 'Done!');
-              this.displayResults(results, totalFiles);
-            }
-          }
-          return;
-        }
-
-        const fileIndex = indicesToUpload[idx];
-        const file = this.files[fileIndex];
-        this.updateProgress(((completedFiles + idx) / totalFiles) * 100, 'Uploading ' + file.name + '...');
-
-        uploadFile(fileIndex, (err, success) => {
-          if (success) {
-            uploadedCount++;
-            burstProcessedCount = idx + 1;
-            const lastResult = results[results.length - 1];
-            if (lastResult?.type === 'success') {
-              this.addIncrementalResult(lastResult, results.length - 1);
-            }
-            this.updateProgress(((completedFiles + uploadedCount + (indicesToUpload.length - idx - 1)) / totalFiles) * 100, 'Uploaded: ' + lastResult?.url);
-          } else if (err && (err.message.includes('Rate limit') || err.message.includes('429') || err.message.includes('Too Many Requests'))) {
-            rateLimited = true;
-            const waitSeconds = getWaitSeconds();
-            const rateLimitNotice = document.createElement('div');
-            rateLimitNotice.className = 'result-item warning';
-            rateLimitNotice.textContent = 'Rate limited! Waiting ' + waitSeconds + 's before next upload...';
-            rateLimitNotice.id = 'rate-limit-notice';
-            const existingNotice = this.resultsContent.querySelector('#rate-limit-notice');
-            if (existingNotice) existingNotice.remove();
-            this.resultsContent.insertBefore(rateLimitNotice, this.resultsContent.firstChild);
-            rateLimitNotice.scrollIntoView({ behavior: 'smooth', block: 'center' });
-
-            uploadNext(indicesToUpload.length);
-            return;
-          } else {
-            burstProcessedCount = idx + 1;
-          }
-          uploadNext(idx + 1);
-        });
-      };
-
-      this.updateProgress((completedFiles / totalFiles) * 100, 'Uploading ' + (completedFiles + 1) + '-' + (completedFiles + indicesToUpload.length) + ' of ' + totalFiles + '...');
-      uploadNext(0);
-    };
-
-    if (createCollection) {
-      this.updateProgress(0, 'Creating collection...');
-
-      const formData = new FormData();
-      formData.append('title', title || 'Untitled');
-      formData.append('desc', description);
-      formData.append('private', isPrivate ? 'true' : 'false');
-
-      fetch(this.apiBaseUrl + '/upload/sxcu/collections', {
-        method: 'POST',
-        body: formData,
-        headers: { ...this.getAuthHeaders(), 'User-Agent': 'sxcuUploader/1.0' }
-      })
-        .then(response => {
-          if (!response.ok) throw new Error('Collection creation failed: ' + response.statusText);
-          return response.json();
-        })
-        .then((rawData: unknown) => {
-          const data = rawData as { collection_id?: string; id?: string; collection_token?: string; token?: string };
-          collectionId = data.collection_id || data.id || '';
-          collectionToken = data.collection_token || data.token || '';
-
-          if (!collectionId && !collectionToken) {
-            throw new Error('Invalid collection response. Keys: ' + Object.keys(data).join(', '));
-          }
-
-          const collectionResult: UploadResult = { type: 'success', url: 'https://sxcu.net/c/' + collectionId, isCollection: true };
-          results.push(collectionResult);
-          this.addIncrementalResult(collectionResult, results.length - 1);
-          this.updateProgress(0, 'Collection created. Starting uploads...');
-          processNextBurst();
-        })
-        .catch(error => {
-          results.push({ type: 'error', message: 'Failed to create collection: ' + error.message });
-          this.updateProgress(100, 'Done!');
-          this.displayResults(results, totalFiles);
-        });
-    } else {
-      processNextBurst();
-    }
+    runSxcuSequencer(
+      input,
+      this.makeObserver(this.files.length, secondsRemaining => this.updateRateLimitNotice(secondsRemaining)),
+      window.fetch.bind(window),
+    );
   }
+
 
   private uploadToImgchest(_results: UploadResult[]): void {
     const anonymous = (document.getElementById('anonymous') as HTMLInputElement).checked;
