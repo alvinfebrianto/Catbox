@@ -1,6 +1,7 @@
-import { Provider, UploadResult, ALLOWED_EXTENSIONS, IMGCHEST_ALLOWED_EXTENSIONS, IMGCHEST_MAX_FILE_SIZE, KEK_ALLOWED_EXTENSIONS, validateImgchestFiles, validateKekFiles } from './types';
-import { CatboxUploadInput, UploadObserver } from './upload/contracts';
+import { Provider, UploadResult, ALLOWED_EXTENSIONS, IMGCHEST_ALLOWED_EXTENSIONS, KEK_ALLOWED_EXTENSIONS, validateImgchestFiles } from './types';
+import { CatboxUploadInput, KekUploadInput, UploadObserver } from './upload/contracts';
 import { uploadToCatbox as runCatboxSequencer } from './upload/catbox';
+import { uploadToKek as runKekSequencer } from './upload/kek';
 
 declare const API_BASE_URL: string;
 
@@ -496,7 +497,7 @@ class ImageUploader {
           this.uploadToImgchest(results);
           break;
         case 'kek':
-          this.uploadToKek(results, urls);
+          this.uploadToKek(urls);
           break;
       }
     } catch (error) {
@@ -531,94 +532,17 @@ class ImageUploader {
   }
 
 
-  private uploadToKek(results: UploadResult[], urls: string[]): void {
-    if (this.files.length > 0) {
-      const validation = validateKekFiles(this.files);
-      if (!validation.ok) {
-        this.showError(validation.error || 'Invalid files');
-        this.setLoading(false);
-        this.progressDiv.style.display = 'none';
-        return;
-      }
-    }
-
-    type QueueItem = { type: 'file'; file: File } | { type: 'url'; url: string };
-    const queue: QueueItem[] = [
-      ...this.files.map(f => ({ type: 'file' as const, file: f })),
-      ...urls.map(u => ({ type: 'url' as const, url: u })),
-    ];
-
-    if (queue.length === 0) {
-      this.showError('Please select at least one file or enter URLs');
-      this.setLoading(false);
-      this.progressDiv.style.display = 'none';
-      return;
-    }
-
-    const totalItems = queue.length;
-    let completedItems = 0;
-
-    const customKey = this.kekApiKeyInput?.value.trim();
-    const isMature = this.kekMatureCheckbox?.checked;
-
-    const processNext = (index: number): void => {
-      if (index >= queue.length) {
-        this.updateProgress(100, 'Done!');
-        this.displayResults(results, totalItems);
-        return;
-      }
-
-      const item = queue[index];
-      const label = item.type === 'file' ? item.file.name : item.url;
-      this.updateProgress((index / totalItems) * 100, 'Uploading ' + label + '...');
-
-      const formData = new FormData();
-      if (item.type === 'file') {
-        formData.append('file', item.file);
-      } else {
-        formData.append('url', item.url);
-      }
-      formData.append('mature', isMature ? 'true' : 'false');
-
-      const headers: Record<string, string> = { ...this.getAuthHeaders() };
-      if (customKey) {
-        headers['X-Kek-Auth'] = customKey;
-      }
-
-      fetch(this.apiBaseUrl + '/upload/kek/posts', { method: 'POST', body: formData, headers })
-        .then(response => response.text())
-        .then(text => {
-          let data: { filename?: string; error?: string };
-          try {
-            data = JSON.parse(text);
-          } catch {
-            throw new Error('Unexpected response: ' + text.substring(0, 200));
-          }
-
-          if (data.error || !data.filename) {
-            throw new Error(data.error || 'Upload failed');
-          }
-
-          const result: UploadResult = { type: 'success', url: 'https://i.kek.sh/' + data.filename };
-          results.push(result);
-          this.addIncrementalResult(result, results.length - 1);
-          completedItems++;
-          this.updateProgress((completedItems / totalItems) * 100, 'Uploaded ' + completedItems + ' of ' + totalItems);
-          processNext(index + 1);
-        })
-        .catch(error => {
-          const errMsg = item.type === 'file'
-            ? 'Failed to upload ' + item.file.name + ': ' + error.message
-            : 'Failed to upload URL ' + item.url + ': ' + error.message;
-          const result: UploadResult = { type: 'error', message: errMsg };
-          results.push(result);
-          this.addIncrementalResult(result, results.length - 1);
-          completedItems++;
-          processNext(index + 1);
-        });
+  private uploadToKek(urls: string[]): void {
+    const input: KekUploadInput = {
+      apiBaseUrl: this.apiBaseUrl,
+      files: this.files,
+      urls,
+      authHeaders: this.getAuthHeaders(),
+      apiKey: this.kekApiKeyInput?.value.trim(),
+      mature: this.kekMatureCheckbox?.checked ?? false,
     };
-
-    processNext(0);
+    const totalItems = this.files.length + urls.length;
+    runKekSequencer(input, this.makeObserver(totalItems), window.fetch.bind(window));
   }
 
   private uploadToSxcu(results: UploadResult[]): void {
