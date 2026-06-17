@@ -27,3 +27,15 @@ _Avoid_: retry strategy, backoff policy, rate-limit mode
 **Host**:
 A runtime that wires the provider modules and engine to an HTTP entry point and shapes responses. Three: the Node server, the Cloudflare Worker, and the Durable Object.
 _Avoid_: runtime, server, adapter
+
+**Upload sequencer**:
+A client-side module that orchestrates one provider's multi-file upload flow against our own proxy — request shaping, multi-file/URL looping, burst pacing, response parsing, and incremental result emission. One per provider: catbox, kek, sxcu, imgchest. Distinct from the provider proxy runtime (which talks to the upstream provider) and from a provider (which is the external service).
+_Avoid_: client provider module, upload handler, uploader
+
+**Upload observer**:
+The seam an upload sequencer emits events through — results, progress, rate-limit-wait, and completion. Implemented by the `ImageUploader` class in production (bridging to its rendering methods) and by a recording double in tests.
+_Avoid_: callback, event emitter, listener, handler
+
+**Upload input**:
+The plain, DOM-free contract object the `ImageUploader` class builds from form state and hands to an upload sequencer. One shape per provider. Carries everything the sequencer needs (files, URLs, options) with no DOM access.
+_Avoid_: form data, options, params, request
