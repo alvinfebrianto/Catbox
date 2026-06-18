@@ -7,14 +7,15 @@ import {
   RateLimitHeaders,
   MAX_IMGCHEST_IMAGES_PER_REQUEST,
   validateKekFiles,
+  getCorsHeaders,
 } from './types';
-import { CatboxProviderInputError, readCatboxUploadInput, uploadToCatbox } from './providers/catbox';
 import { KekProviderInputError, readKekUploadInput, uploadToKek } from './providers/kek';
 import { FAIL_FAST_RATE_LIMIT_POLICY, RateLimitStore, executeRateLimited } from './rate-limit/engine';
 import { FileRateLimitStore } from './rate-limit/file-store';
 import { FetchLike } from './provider-protocol';
 import { SxcuUploadInput, uploadToSxcu } from './providers/sxcu';
 import { uploadToImgchest } from './providers/imgchest';
+import { handleUploadRequest, type UploadEndpointDeps } from './upload-endpoint';
 
 export interface HostDeps {
   fetch?: FetchLike;
@@ -73,30 +74,6 @@ function getBearerToken(req: Request): string | null {
   const m = raw.match(/^Bearer\s+(.+)$/i);
   const token = (m ? m[1] : raw).trim();
   return token || null;
-}
-
-async function handleCatboxUpload(req: Request, deps?: HostDeps): Promise<Response> {
-  try {
-    const input = readCatboxUploadInput(await req.formData());
-    const result = await uploadToCatbox(input, { fetch: deps?.fetch });
-
-    return new Response(String(result.body), {
-      status: result.status >= 200 && result.status < 300 ? 200 : result.status,
-    });
-  } catch (error) {
-    if (error instanceof CatboxProviderInputError) {
-      return new Response(JSON.stringify({ error: error.message }), {
-        headers: { 'Content-Type': 'application/json' },
-        status: 400,
-      });
-    }
-
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return new Response(JSON.stringify({ error: message }), {
-      headers: { 'Content-Type': 'application/json' },
-      status: 500,
-    });
-  }
 }
 
 async function handleKekPost(req: Request, deps?: HostDeps): Promise<Response> {
@@ -305,13 +282,18 @@ function buildRateLimitHeaders(rlh: RateLimitHeaders | undefined): Record<string
   return headers;
 }
 
-function handleRequest(req: Request): Response | Promise<Response> {
+async function handleRequest(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const method = req.method;
   const path = url.pathname;
 
-  if (method === 'POST' && path === '/upload/catbox') {
-    return handleCatboxUpload(req);
+  if (method === 'POST') {
+    const deps: UploadEndpointDeps = {
+      corsHeaders: getCorsHeaders(req.headers.get('Origin')),
+      fetch: undefined,
+    };
+    const result = await handleUploadRequest(req, deps);
+    if (result) return result;
   }
 
   if (method === 'POST' && path === '/upload/kek/posts') {
@@ -432,7 +414,6 @@ export {
   getImgchestToken,
   getKekKey,
   handleKekPost,
-  handleCatboxUpload,
   handleSxcuCollections,
   handleSxcuFiles,
   handleImgchestPost,

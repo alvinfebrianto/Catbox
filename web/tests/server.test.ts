@@ -1,7 +1,6 @@
 import { test, expect, describe, vi, afterEach } from 'vitest';
 import {
   getImgchestToken,
-  handleCatboxUpload,
   handleSxcuCollections,
   handleSxcuFiles,
   handleImgchestPost,
@@ -56,48 +55,6 @@ describe('Token management', () => {
   test('returns null when no token available', () => {
     delete process.env.IMGCHEST_API_TOKEN;
     expect(getImgchestToken()).toBeNull();
-  });
-});
-
-describe('Catbox upload handler', () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  test('proxies file upload to catbox API', async () => {
-    const fetch = vi.fn(async () => new Response('https://files.catbox.moe/abc.png', { status: 200 }));
-
-    const formData = makeFormData({
-      reqtype: 'fileupload',
-      fileToUpload: new File(['content'], 'test.png', { type: 'image/png' }),
-    });
-    const req = new Request('http://localhost:3000/upload/catbox', { method: 'POST', body: formData });
-    const response = await handleCatboxUpload(req, { fetch });
-
-    expect(response.status).toBe(200);
-    expect(await response.text()).toBe('https://files.catbox.moe/abc.png');
-    expect(fetch).toHaveBeenCalledWith('https://catbox.moe/user/api.php', expect.anything());
-  });
-
-  test('handles URL upload requests', async () => {
-    const fetch = vi.fn(async () => new Response('https://files.catbox.moe/abc.png', { status: 200 }));
-
-    const formData = makeFormData({
-      reqtype: 'urlupload',
-      url: 'https://example.com/image.png',
-    });
-    const req = new Request('http://localhost:3000/upload/catbox', { method: 'POST', body: formData });
-    const response = await handleCatboxUpload(req, { fetch });
-
-    expect(response.status).toBe(200);
-  });
-
-  test('rejects unknown request types', async () => {
-    const formData = makeFormData({ reqtype: 'unknown' });
-    const req = new Request('http://localhost:3000/upload/catbox', { method: 'POST', body: formData });
-
-    const response = await handleCatboxUpload(req);
-    expect(response.status).toBe(400);
   });
 });
 
