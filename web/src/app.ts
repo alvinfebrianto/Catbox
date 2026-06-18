@@ -32,7 +32,7 @@ function createSafeLink(url: string): HTMLAnchorElement {
   return a;
 }
 
-class ImageUploader {
+export class ImageUploader {
   private files: File[] = [];
   private provider: Provider;
   private uploadCompleted = false;
