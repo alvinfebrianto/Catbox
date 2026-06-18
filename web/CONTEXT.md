@@ -9,7 +9,7 @@ An external image-hosting service the proxy forwards uploads to. There are four:
 _Avoid_: host, service, backend, target
 
 **Provider proxy runtime**:
-The shared logic that performs an upload to a provider: request shaping, outbound fetch, response parsing, and retry. Collapsed into one set of modules shared across the Node server, Worker, and Durable Object.
+The shared logic that performs an upload to a provider: outbound fetch, response parsing, and retry. Collapsed into one set of modules shared across the Node server, Worker, and Durable Object. It receives an already-shaped provider input (request shaping is the upload endpoint module's job) and returns a ProviderResult.
 _Avoid_: upload handler, proxy logic, fetch wrapper
 
 **Rate-limit engine**:
@@ -25,8 +25,12 @@ The per-provider decision rule the engine applies when a request is blocked pre-
 _Avoid_: retry strategy, backoff policy, rate-limit mode
 
 **Host**:
-A runtime that wires the provider modules and engine to an HTTP entry point and shapes responses. Three: the Node server, the Cloudflare Worker, and the Durable Object.
+A runtime that wires the provider modules and engine to an HTTP entry point and supplies runtime dependencies (CORS origins, secrets, the rate-limit store, static assets). Three: the Node server, the Cloudflare Worker, and the Durable Object. A host no longer shapes upload requests or responses itself — that is the upload endpoint module's job.
 _Avoid_: runtime, server, adapter
+
+**Upload endpoint module**:
+The deep module a host calls to perform one upload. Its interface is one function — `handleUploadRequest(request, deps): Promise<Response>` — and nothing else. It owns route matching, request shaping (form-data reading, token resolution, validation), the provider/engine call, and response shaping (status normalization, the JSON error envelope, CORS header projection, rate-limit header projection). The three hosts each reduce to a single call to it, plus their own runtime wiring (static assets in Node, the DO forwarding boundary and `X-Origin`/token injection in the Worker, per-IP `idFromName` and engine-in-DO atomicity in the Durable Object per ADR-0001).
+_Avoid_: upload handler, request handler, endpoint, controller, route module
 
 **Upload sequencer**:
 A client-side module that orchestrates one provider's multi-file upload flow against our own proxy — request shaping, multi-file/URL looping, burst pacing, response parsing, and incremental result emission. One per provider: catbox, kek, sxcu, imgchest. Distinct from the provider proxy runtime (which talks to the upstream provider) and from a provider (which is the external service).
@@ -39,3 +43,23 @@ _Avoid_: callback, event emitter, listener, handler
 **Upload input**:
 The plain, DOM-free contract object the `ImageUploader` class builds from form state and hands to an upload sequencer. One shape per provider. Carries everything the sequencer needs (files, URLs, options) with no DOM access.
 _Avoid_: form data, options, params, request
+
+**Provider input**:
+The plain, host-free contract object a provider input reader produces from an incoming `Request`'s formData (and, where relevant, the resolved bearer token). One shape per provider: catbox, kek, sxcu (file or collection), imgchest (post or add-to-post). The provider proxy runtime consumes it. Validation failures surface as a tagged `{ ok: false, error }` return, not as a thrown exception across the seam.
+_Avoid_: form data, request body, params, input object
+
+**Provider input reader**:
+The single function, per provider, that turns an incoming `Request` into either a valid Provider input or a validation error. Lives in the upload endpoint module (one reader per provider, in `request-shaping.ts`). Owns form-data reading, token resolution against `deps.secrets`, and validation gating (file/size/count caps per provider). Baking validation into the reader is what makes the catbox/imgchest/sxcu-files validation uniform across all hosts.
+_Avoid_: parser, request parser, form reader, provider parser
+
+**Request shaping**:
+The upload endpoint module's job of turning an incoming `Request` into a Provider input via the provider input reader — form-data reading, token resolution, validation. Distinct from a provider proxy runtime (outbound fetch/response parsing/retry) and from an upload sequencer (client-side multi-file orchestration).
+_Avoid_: request parsing, request building, request preparation
+
+**Response shaping**:
+The upload endpoint module's job of turning a ProviderResult into an outgoing `Response`: per-provider status normalization (2xx→200 for catbox/kek; passthrough for imgchest/sxcu), the single JSON error envelope (`{ error }`), CORS header application (from `deps.corsHeaders`), and rate-limit header projection.
+_Avoid_: response building, response formatting, response handler
+
+**Rate-limit header projection**:
+The single function that maps a `RateLimitHeaders` object onto the `X-RateLimit-*` response headers. Lives in the upload endpoint module's response-shaping code. Replaces the former per-host duplicates `buildRateLimitHeaders` (Node) and `createResponseHeadersFromProvider` (Durable Object), which were the same logic under two names.
+_Avoid_: rate-limit headers, RL header builder, rate-limit header mapping
