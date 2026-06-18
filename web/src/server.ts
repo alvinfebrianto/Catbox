@@ -6,10 +6,8 @@ import { resolve, extname, sep } from 'path';
 import {
   RateLimitHeaders,
   MAX_IMGCHEST_IMAGES_PER_REQUEST,
-  validateKekFiles,
   getCorsHeaders,
 } from './types';
-import { KekProviderInputError, readKekUploadInput, uploadToKek } from './providers/kek';
 import { FAIL_FAST_RATE_LIMIT_POLICY, RateLimitStore, executeRateLimited } from './rate-limit/engine';
 import { FileRateLimitStore } from './rate-limit/file-store';
 import { FetchLike } from './provider-protocol';
@@ -74,51 +72,6 @@ function getBearerToken(req: Request): string | null {
   const m = raw.match(/^Bearer\s+(.+)$/i);
   const token = (m ? m[1] : raw).trim();
   return token || null;
-}
-
-async function handleKekPost(req: Request, deps?: HostDeps): Promise<Response> {
-  const headerApiKey = req.headers.get('X-Kek-Auth')?.trim() || undefined;
-
-  let input;
-  try {
-    input = readKekUploadInput(await req.formData(), getKekKey() ?? undefined, headerApiKey);
-  } catch (error) {
-    const status = error instanceof KekProviderInputError ? 400 : 500;
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return new Response(JSON.stringify({ error: message }), {
-      headers: { 'Content-Type': 'application/json' },
-      status,
-    });
-  }
-
-  if (input.files && input.files.length > 0) {
-    const files = input.files.filter((f): f is File => f instanceof File);
-    const validation = validateKekFiles(files);
-    if (!validation.ok) {
-      return new Response(JSON.stringify({ error: validation.error }), {
-        headers: { 'Content-Type': 'application/json' },
-        status: 400,
-      });
-    }
-  }
-
-  try {
-    const result = await uploadToKek(input, { fetch: deps?.fetch });
-
-    return new Response(
-      typeof result.body === 'string' ? result.body : JSON.stringify(result.body),
-      {
-        headers: { 'Content-Type': 'application/json' },
-        status: result.status >= 200 && result.status < 300 ? 200 : result.status,
-      },
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return new Response(JSON.stringify({ error: message }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
 }
 
 async function handleSxcuCollections(req: Request, deps?: HostDeps): Promise<Response> {
@@ -291,13 +244,10 @@ async function handleRequest(req: Request): Promise<Response> {
     const deps: UploadEndpointDeps = {
       corsHeaders: getCorsHeaders(req.headers.get('Origin')),
       fetch: undefined,
+      secrets: { kekApiKey: getKekKey() ?? undefined },
     };
     const result = await handleUploadRequest(req, deps);
     if (result) return result;
-  }
-
-  if (method === 'POST' && path === '/upload/kek/posts') {
-    return handleKekPost(req);
   }
 
   if (method === 'POST' && path === '/upload/sxcu/collections') {
@@ -413,7 +363,6 @@ if (isMain) {
 export {
   getImgchestToken,
   getKekKey,
-  handleKekPost,
   handleSxcuCollections,
   handleSxcuFiles,
   handleImgchestPost,

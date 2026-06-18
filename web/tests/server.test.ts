@@ -5,7 +5,6 @@ import {
   handleSxcuFiles,
   handleImgchestPost,
   handleImgchestAdd,
-  handleKekPost,
   MAX_IMGCHEST_IMAGES_PER_REQUEST,
   HostDeps,
 } from '../src/server';
@@ -220,90 +219,6 @@ describe('Imgchest upload handlers', () => {
     const req = new Request('http://localhost:3000/upload/imgchest/post', { method: 'POST', body: formData });
 
     const response = await handleImgchestPost(req, { fetch, store });
-    expect(response.status).toBe(400);
-  });
-});
-
-describe('Kek upload handler', () => {
-  afterEach(() => {
-    process.env = { ...originalEnv };
-  });
-
-  test('proxies url upload to kek /posts and follows up with mature PUT', async () => {
-    process.env.KEK_API_KEY = 'env-key';
-    const fetch = vi.fn(async (url: RequestInfo | URL) => {
-      if (typeof url === 'string' && url.endsWith('/mature')) {
-        return new Response('', { status: 200 });
-      }
-      return jsonResponse({ id: 'kek-1', url: 'https://kek.sh/i/kek-1' });
-    });
-
-    const formData = makeFormData({ url: 'https://example.com/cat.png' });
-    const req = new Request('http://localhost:3000/upload/kek/posts', { method: 'POST', body: formData });
-
-    const response = await handleKekPost(req, { fetch });
-    expect(response.status).toBe(200);
-    expect(fetch).toHaveBeenCalledTimes(2);
-
-    const [firstUrl, firstInit] = fetch.mock.calls[0] as unknown as [string, RequestInit];
-    expect(firstUrl).toBe('https://kek.sh/api/v1/posts');
-    expect((firstInit.headers as Record<string, string>)['x-kek-auth']).toBe('env-key');
-  });
-
-  test('uses X-Kek-Auth header in preference to env key', async () => {
-    process.env.KEK_API_KEY = 'env-key';
-    const fetch = vi.fn(async () =>
-      jsonResponse({ id: 'kek-2', url: 'https://kek.sh/i/kek-2' })
-    );
-
-    const formData = makeFormData({ url: 'https://example.com/cat.png' });
-    const req = new Request('http://localhost:3000/upload/kek/posts', {
-      method: 'POST',
-      body: formData,
-      headers: { 'X-Kek-Auth': 'header-key' },
-    });
-
-    await handleKekPost(req, { fetch });
-    const [, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
-    expect((init.headers as Record<string, string>)['x-kek-auth']).toBe('header-key');
-  });
-
-  test('skips mature PUT when mature flag is false', async () => {
-    process.env.KEK_API_KEY = 'env-key';
-    const fetch = vi.fn(async () =>
-      jsonResponse({ id: 'kek-3', url: 'https://kek.sh/i/kek-3' })
-    );
-
-    const formData = makeFormData({
-      url: 'https://example.com/cat.png',
-      mature: 'false',
-    });
-    const req = new Request('http://localhost:3000/upload/kek/posts', { method: 'POST', body: formData });
-
-    await handleKekPost(req, { fetch });
-    expect(fetch).toHaveBeenCalledTimes(1);
-  });
-
-  test('returns 400 when both file and url are provided', async () => {
-    process.env.KEK_API_KEY = 'env-key';
-    const fetch = vi.fn();
-
-    const formData = new FormData();
-    formData.append('url', 'https://example.com/cat.png');
-    formData.append('file', new File(['cat'], 'cat.png', { type: 'image/png' }));
-    const req = new Request('http://localhost:3000/upload/kek/posts', { method: 'POST', body: formData });
-
-    const response = await handleKekPost(req, { fetch });
-    expect(response.status).toBe(400);
-  });
-
-  test('returns 400 when no api key is configured', async () => {
-    const fetch = vi.fn();
-
-    const formData = makeFormData({ url: 'https://example.com/cat.png' });
-    const req = new Request('http://localhost:3000/upload/kek/posts', { method: 'POST', body: formData });
-
-    const response = await handleKekPost(req, { fetch });
     expect(response.status).toBe(400);
   });
 });
