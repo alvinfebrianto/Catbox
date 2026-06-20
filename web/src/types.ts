@@ -246,6 +246,17 @@ export function validateKekFiles(files: File[]): FileValidationResult {
   return { ok: true };
 }
 
+export function getBearerToken(request: Request): string | null {
+  const raw = request.headers.get('Authorization');
+  if (!raw) return null;
+
+  const trimmed = raw.trim();
+  const m = trimmed.match(/^Bearer\s+(.+)$/i);
+  if (!m) return /^Bearer$/i.test(trimmed) ? null : trimmed;
+  const token = m[1].trim();
+  return token || null;
+}
+
 export function parseRateLimitHeaders(headers: Headers): RateLimitHeaders {
   const result: RateLimitHeaders = {};
 

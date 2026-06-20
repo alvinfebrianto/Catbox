@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
+import type { DurableObjectStorage } from '@cloudflare/workers-types';
 import { withRetry } from '../src/retry';
 import {
+  DurableObjectRateLimitStore,
   FAIL_FAST_RATE_LIMIT_POLICY,
   MemoryRateLimitStore,
   RETRY_AFTER_WAIT_RATE_LIMIT_POLICY,
@@ -123,6 +125,40 @@ describe('MemoryRateLimitStore', () => {
     const loaded = await store.load();
     expect(loaded.imgchest.default?.remaining).toBe(0);
     expect(loaded).not.toBe(state);
+  });
+});
+
+describe('DurableObjectRateLimitStore', () => {
+  test('loads empty state when no stored data exists', async () => {
+    const storage = {
+      get: vi.fn(async () => undefined),
+      put: vi.fn(async () => undefined),
+    };
+    const store = new DurableObjectRateLimitStore(storage as unknown as DurableObjectStorage);
+
+    const state = await store.load();
+    expect(state.imgchest.default).toBeNull();
+    expect(state.sxcu.buckets).toEqual({});
+    expect(state.sxcu.global).toBeNull();
+  });
+
+  test('persists and retrieves rate-limit state', async () => {
+    let stored: unknown = undefined;
+    const storage = {
+      get: vi.fn(async () => stored),
+      put: vi.fn(async (key: string, value: unknown) => { stored = value; }),
+    };
+    const store = new DurableObjectRateLimitStore(storage as unknown as DurableObjectStorage);
+
+    const state = await store.load();
+    state.imgchest.default = {
+      limit: 60, remaining: 55,
+      resetAt: Date.now() + 60_000, windowStart: Date.now(), lastUpdated: Date.now(),
+    };
+    await store.save(state);
+
+    const loaded = await store.load();
+    expect(loaded.imgchest.default?.remaining).toBe(55);
   });
 });
 

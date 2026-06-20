@@ -3,7 +3,7 @@ import { Readable } from 'stream';
 import { pathToFileURL } from 'url';
 import { mkdirSync, existsSync, readFileSync } from 'fs';
 import { resolve, extname, sep } from 'path';
-import { getCorsHeaders } from './types';
+import { getCorsHeaders, getBearerToken } from './types';
 import { RateLimitStore } from './rate-limit/engine';
 import { FileRateLimitStore } from './rate-limit/file-store';
 import { FetchLike } from './provider-protocol';
@@ -57,15 +57,6 @@ function getImgchestToken(): string | null {
 
 function getKekKey(): string | null {
   return process.env.KEK_API_KEY || null;
-}
-
-function getBearerToken(req: Request): string | null {
-  const raw = req.headers.get('Authorization');
-  if (!raw) return null;
-
-  const m = raw.match(/^Bearer\s+(.+)$/i);
-  const token = (m ? m[1] : raw).trim();
-  return token || null;
 }
 
 async function handleRequest(req: Request, hostDeps: HostDeps = {}): Promise<Response> {

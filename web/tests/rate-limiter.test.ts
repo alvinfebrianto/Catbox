@@ -1,4 +1,4 @@
-import { test, expect, describe } from 'vitest';
+import { test, expect, describe, vi } from 'vitest';
 import {
   RateLimitEntry,
   RateLimitHeaders,
@@ -227,6 +227,54 @@ describe('createRateLimitEntry', () => {
 
     expect(entry.limit).toBe(60);
     expect(entry.remaining).toBe(59);
+  });
+});
+
+describe('getBearerToken', () => {
+  test('extracts token from valid Bearer authorization header', async () => {
+    const { getBearerToken } = await import('../src/types');
+    const result = getBearerToken(new Request('http://localhost/test', {
+      headers: { Authorization: 'Bearer my-secret-token' },
+    }));
+    expect(result).toBe('my-secret-token');
+  });
+
+  test('returns null when no Authorization header is present', async () => {
+    const { getBearerToken } = await import('../src/types');
+    const result = getBearerToken(new Request('http://localhost/test'));
+    expect(result).toBeNull();
+  });
+
+  test('returns null for empty Bearer token', async () => {
+    const { getBearerToken } = await import('../src/types');
+    const result = getBearerToken(new Request('http://localhost/test', {
+      headers: { Authorization: 'Bearer   ' },
+    }));
+    expect(result).toBeNull();
+  });
+
+  test('handles case-insensitive Bearer scheme', async () => {
+    const { getBearerToken } = await import('../src/types');
+    const result = getBearerToken(new Request('http://localhost/test', {
+      headers: { Authorization: 'bearer my-token' },
+    }));
+    expect(result).toBe('my-token');
+  });
+
+  test('returns raw value when no scheme is present', async () => {
+    const { getBearerToken } = await import('../src/types');
+    const result = getBearerToken(new Request('http://localhost/test', {
+      headers: { Authorization: 'Basic dXNlcjpwYXNz' },
+    }));
+    expect(result).toBe('Basic dXNlcjpwYXNz');
+  });
+
+  test('trims whitespace from extracted token', async () => {
+    const { getBearerToken } = await import('../src/types');
+    const result = getBearerToken(new Request('http://localhost/test', {
+      headers: { Authorization: 'Bearer  spaced-token  ' },
+    }));
+    expect(result).toBe('spaced-token');
   });
 });
 
