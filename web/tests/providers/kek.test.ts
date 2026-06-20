@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest';
-import { uploadToKek, readKekUploadInput, KekUploadInput, KekProviderInputError } from '../../src/providers/kek';
+import { uploadToKek, KekUploadInput } from '../../src/providers/kek';
+import { readKekUploadInput, KekProviderInputError } from '../../src/upload-endpoint/request-shaping';
 function jsonResponse(body: unknown, init: { status?: number; headers?: Record<string, string> } = {}): Response {
   return new Response(JSON.stringify(body), {
     status: init.status ?? 200,

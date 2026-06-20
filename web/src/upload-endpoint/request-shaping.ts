@@ -1,12 +1,132 @@
-import { CatboxUploadInput, readCatboxUploadInput, CatboxProviderInputError } from '../providers/catbox';
-import {
-  KekUploadInput,
-  readKekUploadInputWithOptions,
-  KekProviderInputError,
-} from '../providers/kek';
+import { CatboxUploadInput, CatboxRequestType, CATBOX_REQUEST_TYPES } from '../providers/catbox';
+import { KekUploadInput } from '../providers/kek';
 import { SxcuUploadInput } from '../providers/sxcu';
 import { ImgchestUploadInput } from '../providers/imgchest';
 import { validateFiles, validateKekFiles, validateImgchestFiles } from '../types';
+
+// ── Catbox reader (relocated from providers/catbox) ──
+
+export class CatboxProviderInputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CatboxProviderInputError';
+  }
+}
+
+function isCatboxRequestType(value: unknown): value is CatboxRequestType {
+  return typeof value === 'string' && CATBOX_REQUEST_TYPES.includes(value as CatboxRequestType);
+}
+
+export function readCatboxUploadInput(formData: FormData): CatboxUploadInput {
+  const reqtype = formData.get('reqtype');
+
+  if (!isCatboxRequestType(reqtype)) {
+    throw new CatboxProviderInputError('Unknown request type');
+  }
+
+  const input: CatboxUploadInput = { reqtype };
+  copyStringField(formData, input, 'userhash');
+
+  if (reqtype === 'fileupload') {
+    const files = formData.getAll('fileToUpload');
+    if (files.length === 1) {
+      input.fileToUpload = files[0];
+    } else if (files.length > 1) {
+      input.fileToUpload = files;
+    }
+  }
+
+  if (reqtype === 'urlupload') {
+    copyStringField(formData, input, 'url');
+  }
+
+  if (reqtype === 'createalbum') {
+    copyStringField(formData, input, 'title');
+    copyStringField(formData, input, 'desc');
+    copyStringField(formData, input, 'files');
+  }
+
+  return input;
+}
+
+function copyStringField<K extends keyof CatboxUploadInput>(
+  formData: FormData,
+  input: CatboxUploadInput,
+  key: K
+): void {
+  const value = formData.get(key);
+  if (typeof value === 'string') {
+    input[key] = value as CatboxUploadInput[K];
+  }
+}
+
+// ── Kek reader (relocated from providers/kek) ──
+
+export class KekProviderInputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'KekProviderInputError';
+  }
+}
+
+export interface ReadKekUploadInputOptions {
+  /** Caller-supplied key from the X-Kek-Auth header, if any. */
+  headerApiKey?: string;
+  /** API key the host understands is its env-level fallback. */
+  envApiKey?: string;
+}
+
+export function readKekUploadInput(
+  formData: FormData,
+  envApiKey?: string,
+  headerApiKey?: string
+): KekUploadInput {
+  return readKekUploadInputWithOptions(formData, { envApiKey, headerApiKey });
+}
+
+export function readKekUploadInputWithOptions(
+  formData: FormData,
+  options: ReadKekUploadInputOptions
+): KekUploadInput {
+  const apiKey = options.headerApiKey?.trim() || options.envApiKey;
+  if (!apiKey) {
+    throw new KekProviderInputError('kek API key not configured');
+  }
+
+  const files = formData.getAll('file');
+  const urlEntry = formData.get('url');
+  const url = typeof urlEntry === 'string' && urlEntry.length > 0 ? urlEntry : null;
+
+  if (files.length > 0 && url) {
+    throw new KekProviderInputError('Cannot upload both files and URLs in the same request');
+  }
+
+  const isUrlUpload = url !== null;
+
+  if (!isUrlUpload && files.length === 0) {
+    throw new KekProviderInputError('No files or URL provided');
+  }
+
+  if (isUrlUpload) {
+    try {
+      new URL(url);
+    } catch {
+      throw new KekProviderInputError('Invalid URL');
+    }
+  }
+
+  const matureRaw = formData.get('mature');
+  const mature = typeof matureRaw === 'string' ? matureRaw !== 'false' : undefined;
+
+  const input: KekUploadInput = { apiKey, mature };
+  if (isUrlUpload) {
+    input.url = url;
+  } else {
+    input.files = files;
+  }
+
+  return input;
+}
 
 export interface CatboxRequestResult {
   ok: true;

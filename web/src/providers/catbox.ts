@@ -15,64 +15,10 @@ export interface CatboxUploadInput {
   files?: string;
 }
 
-export class CatboxProviderInputError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'CatboxProviderInputError';
-  }
-}
-
 export interface CatboxProviderOptions {
   fetch?: FetchLike;
   retryConfig?: RetryConfig;
   sleep?: Sleep;
-}
-
-export function isCatboxRequestType(value: unknown): value is CatboxRequestType {
-  return typeof value === 'string' && CATBOX_REQUEST_TYPES.includes(value as CatboxRequestType);
-}
-
-export function readCatboxUploadInput(formData: FormData): CatboxUploadInput {
-  const reqtype = formData.get('reqtype');
-
-  if (!isCatboxRequestType(reqtype)) {
-    throw new CatboxProviderInputError('Unknown request type');
-  }
-
-  const input: CatboxUploadInput = { reqtype };
-  copyStringField(formData, input, 'userhash');
-
-  if (reqtype === 'fileupload') {
-    const files = formData.getAll('fileToUpload');
-    if (files.length === 1) {
-      input.fileToUpload = files[0];
-    } else if (files.length > 1) {
-      input.fileToUpload = files;
-    }
-  }
-
-  if (reqtype === 'urlupload') {
-    copyStringField(formData, input, 'url');
-  }
-
-  if (reqtype === 'createalbum') {
-    copyStringField(formData, input, 'title');
-    copyStringField(formData, input, 'desc');
-    copyStringField(formData, input, 'files');
-  }
-
-  return input;
-}
-
-function copyStringField<K extends keyof CatboxUploadInput>(
-  formData: FormData,
-  input: CatboxUploadInput,
-  key: K
-): void {
-  const value = formData.get(key);
-  if (typeof value === 'string') {
-    input[key] = value as CatboxUploadInput[K];
-  }
 }
 
 function createCatboxFormData(input: CatboxUploadInput): FormData {
