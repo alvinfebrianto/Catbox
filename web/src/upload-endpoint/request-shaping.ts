@@ -5,7 +5,8 @@ import {
   KekProviderInputError,
 } from '../providers/kek';
 import { SxcuUploadInput } from '../providers/sxcu';
-import { validateFiles, validateKekFiles } from '../types';
+import { ImgchestUploadInput } from '../providers/imgchest';
+import { validateFiles, validateKekFiles, validateImgchestFiles } from '../types';
 
 export interface CatboxRequestResult {
   ok: true;
@@ -121,4 +122,78 @@ export async function readSxcuRequest(
   }
 
   return { ok: true, input: { type, formData: shaped } };
+}
+
+export interface ImgchestRequestResult {
+  ok: true;
+  input: ImgchestUploadInput;
+}
+
+export interface ImgchestRequestError {
+  ok: false;
+  error: string;
+}
+
+export type ImgchestRequestShaping = ImgchestRequestResult | ImgchestRequestError;
+
+export interface ReadImgchestRequestOptions {
+  /** Pre-resolved imgchest token from `deps.secrets.imgchestToken` (header-then-env, by the host). */
+  token: string | undefined;
+  /** Post id from the `:id` path parameter, for the add-to-post variant. */
+  postId?: string;
+}
+
+export async function readImgchestRequest(
+  formData: FormData,
+  options: ReadImgchestRequestOptions,
+): Promise<ImgchestRequestShaping> {
+  if (!options.token) {
+    return { ok: false, error: 'Imgchest API token not configured' };
+  }
+
+  const images = formData.getAll('images[]').filter((f): f is File => f instanceof File);
+  const validation = validateImgchestFiles(images);
+  if (!validation.ok) {
+    return { ok: false, error: validation.error! };
+  }
+
+  const titleEntry = formData.get('title');
+  const title = typeof titleEntry === 'string' && titleEntry.length > 0 ? titleEntry : undefined;
+
+  const privacyEntry = formData.get('privacy');
+  const privacyRaw = typeof privacyEntry === 'string' && privacyEntry.trim() !== ''
+    ? privacyEntry.trim()
+    : null;
+
+  if (privacyRaw !== null && !['public', 'hidden', 'secret'].includes(privacyRaw)) {
+    return { ok: false, error: 'Invalid privacy value. Must be public, hidden, or secret.' };
+  }
+
+  const nsfwEntry = formData.get('nsfw');
+  const nsfwRaw = typeof nsfwEntry === 'string' && nsfwEntry.trim() !== ''
+    ? nsfwEntry.trim()
+    : null;
+  const nsfwParsed = nsfwRaw !== null ? (nsfwRaw === 'true' || nsfwRaw === '1') : null;
+
+  const isAddToPost = options.postId !== undefined;
+
+  // New posts bake in the imgchest defaults (privacy=hidden, nsfw=true).
+  // Add-to-post passes privacy/nsfw through as undefined unless the client sent them,
+  // so the provider's follow-up PATCH step fires only on an explicit override.
+  const privacy = privacyRaw ?? (isAddToPost ? undefined : 'hidden');
+  const nsfw = nsfwParsed ?? (isAddToPost ? undefined : true);
+
+  const input: ImgchestUploadInput = {
+    images,
+    token: options.token,
+    title,
+    privacy,
+    nsfw,
+  };
+
+  if (isAddToPost) {
+    input.existingPostId = options.postId;
+  }
+
+  return { ok: true, input };
 }

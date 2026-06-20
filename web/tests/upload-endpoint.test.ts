@@ -424,3 +424,305 @@ describe('sxcu request shaping, rate limiting, and response shaping', () => {
     expect(await response!.json()).toEqual({ error: 'Global rate limit exceeded', code: 2 });
   });
 });
+
+describe('imgchest request shaping, rate limiting, and response shaping', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function imgchestDeps(overrides: Partial<UploadEndpointDeps> = {}): UploadEndpointDeps {
+    return makeDeps({
+      secrets: { imgchestToken: 'test-token' },
+      store: new MemoryRateLimitStore(),
+      ...overrides,
+    });
+  }
+
+  test('matches both imgchest routes (post and add-to-post)', async () => {
+    const postReq = new Request('http://localhost:3000/upload/imgchest/post', { method: 'POST' });
+    const postRes = await handleUploadRequest(postReq, imgchestDeps());
+    expect(postRes).not.toBeNull();
+
+    const addReq = new Request('http://localhost:3000/upload/imgchest/post/abc123/add', { method: 'POST' });
+    const addRes = await handleUploadRequest(addReq, imgchestDeps());
+    expect(addRes).not.toBeNull();
+  });
+
+  test('returns a 400 error envelope when imgchest token is not configured', async () => {
+    const formData = new FormData();
+    formData.append('images[]', new File(['content'], 'test.png', { type: 'image/png' }));
+
+    const req = new Request('http://localhost:3000/upload/imgchest/post', { method: 'POST', body: formData });
+    const response = await handleUploadRequest(req, imgchestDeps({ secrets: {} }));
+
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(400);
+    expect(response!.headers.get('Content-Type')).toBe('application/json');
+    const body = await response!.json() as { error: string };
+    expect(body.error).toContain('Imgchest API token not configured');
+  });
+
+  test('resolves the imgchest token from deps.secrets.imgchestToken into the Authorization header', async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ data: { id: 'post123' } }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': '59' },
+    }));
+    const formData = new FormData();
+    formData.append('images[]', new File(['content'], 'test.png', { type: 'image/png' }));
+
+    const req = new Request('http://localhost:3000/upload/imgchest/post', { method: 'POST', body: formData });
+    await handleUploadRequest(req, imgchestDeps({ fetch, secrets: { imgchestToken: 'secret-token' } }));
+
+    const [, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(headers['Authorization']).toBe('Bearer secret-token');
+  });
+
+  test('enforces imgchest file validation before the provider call (file too large)', async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ data: { id: 'post123' } }), { status: 200 }));
+    const formData = new FormData();
+    const bigFile = new File(['x'.repeat(31 * 1024 * 1024)], 'huge.png', { type: 'image/png' });
+    formData.append('images[]', bigFile);
+
+    const req = new Request('http://localhost:3000/upload/imgchest/post', { method: 'POST', body: formData });
+    const response = await handleUploadRequest(req, imgchestDeps({ fetch }));
+
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(400);
+    expect(fetch).not.toHaveBeenCalled();
+    const body = await response!.json() as { error: string };
+    expect(body.error).toContain('max 30MB for Imgchest');
+  });
+
+  test('enforces imgchest file validation before the provider call (wrong extension)', async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ data: { id: 'post123' } }), { status: 200 }));
+    const formData = new FormData();
+    formData.append('images[]', new File(['content'], 'evil.exe', { type: 'application/x-msdownload' }));
+
+    const req = new Request('http://localhost:3000/upload/imgchest/post', { method: 'POST', body: formData });
+    const response = await handleUploadRequest(req, imgchestDeps({ fetch }));
+
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(400);
+    expect(fetch).not.toHaveBeenCalled();
+    const body = await response!.json() as { error: string };
+    expect(body.error).toContain('Unsupported file type for Imgchest');
+  });
+
+  test('rejects empty imgchest images', async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ data: { id: 'post123' } }), { status: 200 }));
+    const req = new Request('http://localhost:3000/upload/imgchest/post', {
+      method: 'POST',
+      body: new FormData(),
+    });
+    const response = await handleUploadRequest(req, imgchestDeps({ fetch }));
+
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(400);
+    expect(fetch).not.toHaveBeenCalled();
+    const body = await response!.json() as { error: string };
+    expect(body.error).toContain('No files provided');
+  });
+
+  test('rejects an invalid privacy value before the provider call', async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ data: { id: 'post123' } }), { status: 200 }));
+    const formData = new FormData();
+    formData.append('images[]', new File(['content'], 'test.png', { type: 'image/png' }));
+    formData.append('privacy', 'invalid');
+
+    const req = new Request('http://localhost:3000/upload/imgchest/post', { method: 'POST', body: formData });
+    const response = await handleUploadRequest(req, imgchestDeps({ fetch }));
+
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(400);
+    expect(fetch).not.toHaveBeenCalled();
+    const body = await response!.json() as { error: string };
+    expect(body.error).toContain('Invalid privacy value');
+  });
+
+  test('creates a new post with status passthrough (no 2xx→200 collapse) and CORS headers', async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ data: { id: 'post123', images: [] } }), {
+      status: 201,
+      headers: { 'Content-Type': 'application/json', 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': '59' },
+    }));
+    const formData = new FormData();
+    formData.append('images[]', new File(['content'], 'test.png', { type: 'image/png' }));
+    formData.append('title', 'My Post');
+
+    const req = new Request('http://localhost:3000/upload/imgchest/post', { method: 'POST', body: formData });
+    const response = await handleUploadRequest(req, imgchestDeps({ fetch }));
+
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(201);
+    expect(response!.headers.get('Content-Type')).toBe('application/json');
+    expect(response!.headers.get('Access-Control-Allow-Origin')).toBe('http://localhost:3000');
+    const body = await response!.json() as { data: { id: string } };
+    expect(body.data.id).toBe('post123');
+
+    const [url] = fetch.mock.calls[0] as unknown as [string];
+    expect(url).toBe('https://api.imgchest.com/v1/post');
+  });
+
+  test('applies imgchest defaults (privacy=hidden, nsfw=true) for a new post', async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ data: { id: 'post123' } }), {
+      status: 200,
+      headers: { 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': '59' },
+    }));
+    const formData = new FormData();
+    formData.append('images[]', new File(['content'], 'test.png', { type: 'image/png' }));
+
+    const req = new Request('http://localhost:3000/upload/imgchest/post', { method: 'POST', body: formData });
+    await handleUploadRequest(req, imgchestDeps({ fetch }));
+
+    const [, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
+    const sentBody = init.body as FormData;
+    expect(sentBody.get('privacy')).toBe('hidden');
+    expect(sentBody.get('nsfw')).toBe('true');
+  });
+
+  test('honours client-supplied privacy and nsfw overrides for a new post', async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ data: { id: 'post123' } }), {
+      status: 200,
+      headers: { 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': '59' },
+    }));
+    const formData = new FormData();
+    formData.append('images[]', new File(['content'], 'test.png', { type: 'image/png' }));
+    formData.append('privacy', 'secret');
+    formData.append('nsfw', 'false');
+
+    const req = new Request('http://localhost:3000/upload/imgchest/post', { method: 'POST', body: formData });
+    await handleUploadRequest(req, imgchestDeps({ fetch }));
+
+    const [, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
+    const sentBody = init.body as FormData;
+    expect(sentBody.get('privacy')).toBe('secret');
+    expect(sentBody.get('nsfw')).toBe('false');
+  });
+
+  test('adds images to an existing post using the :id path parameter', async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ data: { id: 'abc123', images: [] } }), {
+      status: 200,
+      headers: { 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': '59' },
+    }));
+    const formData = new FormData();
+    formData.append('images[]', new File(['content'], 'new.png', { type: 'image/png' }));
+
+    const req = new Request('http://localhost:3000/upload/imgchest/post/abc123/add', { method: 'POST', body: formData });
+    await handleUploadRequest(req, imgchestDeps({ fetch }));
+
+    const [url] = fetch.mock.calls[0] as unknown as [string];
+    expect(url).toBe('https://api.imgchest.com/v1/post/abc123/add');
+  });
+
+  test('preserves the add-to-post follow-up PATCH when privacy/nsfw are supplied', async () => {
+    const urls: string[] = [];
+    const fetch = vi.fn(async (url) => {
+      urls.push(String(url));
+      return new Response(JSON.stringify({ data: { id: 'abc123', images: [] } }), {
+        status: 200,
+        headers: { 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': '59' },
+      });
+    });
+    const formData = new FormData();
+    formData.append('images[]', new File(['content'], 'new.png', { type: 'image/png' }));
+    formData.append('privacy', 'secret');
+    formData.append('nsfw', 'false');
+
+    const req = new Request('http://localhost:3000/upload/imgchest/post/abc123/add', { method: 'POST', body: formData });
+    await handleUploadRequest(req, imgchestDeps({ fetch }));
+
+    expect(urls).toContain('https://api.imgchest.com/v1/post/abc123/add');
+    expect(urls).toContain('https://api.imgchest.com/v1/post/abc123');
+
+    const patchCall = fetch.mock.calls.find(
+      (c) => String(c[0]) === 'https://api.imgchest.com/v1/post/abc123',
+    ) as unknown as [string, RequestInit] | undefined;
+    expect(patchCall).toBeDefined();
+    expect(patchCall![1].method).toBe('PATCH');
+    expect(JSON.parse(patchCall![1].body as string)).toEqual({ privacy: 'secret', nsfw: 'false' });
+  });
+
+  test('does not issue the follow-up PATCH on add-to-post without privacy/nsfw overrides', async () => {
+    const urls: string[] = [];
+    const fetch = vi.fn(async (url) => {
+      urls.push(String(url));
+      return new Response(JSON.stringify({ data: { id: 'abc123', images: [] } }), {
+        status: 200,
+        headers: { 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': '59' },
+      });
+    });
+    const formData = new FormData();
+    formData.append('images[]', new File(['content'], 'new.png', { type: 'image/png' }));
+
+    const req = new Request('http://localhost:3000/upload/imgchest/post/abc123/add', { method: 'POST', body: formData });
+    await handleUploadRequest(req, imgchestDeps({ fetch }));
+
+    expect(urls).toEqual(['https://api.imgchest.com/v1/post/abc123/add']);
+  });
+
+  test('projects imgchest rate-limit headers from the provider result', async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ data: { id: 'post123' } }), {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': '60',
+        'X-RateLimit-Remaining': '58',
+        'X-RateLimit-Reset': '1700000000',
+      },
+    }));
+    const formData = new FormData();
+    formData.append('images[]', new File(['content'], 'test.png', { type: 'image/png' }));
+
+    const req = new Request('http://localhost:3000/upload/imgchest/post', { method: 'POST', body: formData });
+    const response = await handleUploadRequest(req, imgchestDeps({ fetch }));
+
+    expect(response).not.toBeNull();
+    expect(response!.headers.get('X-RateLimit-Limit')).toBe('60');
+    expect(response!.headers.get('X-RateLimit-Remaining')).toBe('58');
+    expect(response!.headers.get('X-RateLimit-Reset')).toBe('1700000000');
+  });
+
+  test('mediates imgchest through the rate-limit engine (retries on 429 with retry-after-wait)', async () => {
+    let callCount = 0;
+    const fetch = vi.fn(async () => {
+      callCount++;
+      if (callCount === 1) {
+        return new Response(JSON.stringify({ error: 'Rate limited' }), {
+          status: 429,
+          headers: { 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': '0', 'X-RateLimit-Reset-After': '0.1' },
+        });
+      }
+      return new Response(JSON.stringify({ data: { id: 'post123' } }), {
+        status: 200,
+        headers: { 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': '59' },
+      });
+    });
+
+    const formData = new FormData();
+    formData.append('images[]', new File(['content'], 'test.png', { type: 'image/png' }));
+
+    const req = new Request('http://localhost:3000/upload/imgchest/post', { method: 'POST', body: formData });
+    const response = await handleUploadRequest(req, imgchestDeps({ fetch }));
+
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(200);
+    expect(callCount).toBe(2);
+    const body = await response!.json() as { data: { id: string } };
+    expect(body.data.id).toBe('post123');
+  }, 15000);
+
+  test('returns a defensive 500 when imgchest has no rate-limit store', async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ data: { id: 'post123' } }), { status: 200 }));
+    const formData = new FormData();
+    formData.append('images[]', new File(['content'], 'test.png', { type: 'image/png' }));
+
+    const req = new Request('http://localhost:3000/upload/imgchest/post', { method: 'POST', body: formData });
+    const response = await handleUploadRequest(req, imgchestDeps({ fetch, store: undefined }));
+
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(500);
+    expect(fetch).not.toHaveBeenCalled();
+    const body = await response!.json() as { error: string };
+    expect(body.error).toContain('Rate-limit store not configured');
+  });
+});

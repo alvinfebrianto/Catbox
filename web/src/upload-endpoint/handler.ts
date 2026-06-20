@@ -3,7 +3,8 @@ import { FAIL_FAST_RATE_LIMIT_POLICY, RateLimitStore, executeRateLimited } from 
 import { uploadToCatbox } from '../providers/catbox';
 import { uploadToKek } from '../providers/kek';
 import { uploadToSxcu } from '../providers/sxcu';
-import { readCatboxRequest, readKekRequest, readSxcuRequest } from './request-shaping';
+import { uploadToImgchest } from '../providers/imgchest';
+import { readCatboxRequest, readKekRequest, readSxcuRequest, readImgchestRequest } from './request-shaping';
 import { shapeSuccessResponse, shapeJsonSuccessResponse, shapeJsonProviderResponse, shapeErrorResponse } from './response-shaping';
 
 export interface UploadEndpointDeps {
@@ -33,6 +34,15 @@ export async function handleUploadRequest(
 
   if (request.method === 'POST' && url.pathname === '/upload/sxcu/collections') {
     return handleSxcu(request, deps, 'collection');
+  }
+
+  if (request.method === 'POST' && url.pathname === '/upload/imgchest/post') {
+    return handleImgchest(request, deps);
+  }
+
+  const imgchestAddMatch = request.method === 'POST' && /^\/upload\/imgchest\/post\/([^/]+)\/add$/.exec(url.pathname);
+  if (imgchestAddMatch) {
+    return handleImgchest(request, deps, imgchestAddMatch[1]);
   }
 
   return null;
@@ -135,6 +145,36 @@ async function handleKek(request: Request, deps: UploadEndpointDeps): Promise<Re
     }
     const message = typeof result.body === 'string' ? result.body : JSON.stringify(result.body);
     return shapeErrorResponse(result.status, message, deps.corsHeaders);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return shapeErrorResponse(500, message, deps.corsHeaders);
+  }
+}
+
+async function handleImgchest(request: Request, deps: UploadEndpointDeps, postId?: string): Promise<Response> {
+  let formData: FormData;
+  try {
+    formData = await request.formData();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return shapeErrorResponse(400, message, deps.corsHeaders);
+  }
+
+  const shaped = await readImgchestRequest(formData, {
+    token: deps.secrets?.imgchestToken,
+    postId,
+  });
+  if (!shaped.ok) {
+    return shapeErrorResponse(400, shaped.error, deps.corsHeaders);
+  }
+
+  if (!deps.store) {
+    return shapeErrorResponse(500, 'Rate-limit store not configured', deps.corsHeaders);
+  }
+
+  try {
+    const result = await uploadToImgchest(shaped.input, { fetch: deps?.fetch, store: deps.store });
+    return shapeJsonProviderResponse(result, deps.corsHeaders);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     return shapeErrorResponse(500, message, deps.corsHeaders);

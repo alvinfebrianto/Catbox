@@ -3,15 +3,10 @@ import { Readable } from 'stream';
 import { pathToFileURL } from 'url';
 import { mkdirSync, existsSync, readFileSync } from 'fs';
 import { resolve, extname, sep } from 'path';
-import {
-  RateLimitHeaders,
-  MAX_IMGCHEST_IMAGES_PER_REQUEST,
-  getCorsHeaders,
-} from './types';
+import { getCorsHeaders } from './types';
 import { RateLimitStore } from './rate-limit/engine';
 import { FileRateLimitStore } from './rate-limit/file-store';
 import { FetchLike } from './provider-protocol';
-import { uploadToImgchest } from './providers/imgchest';
 import { handleUploadRequest, type UploadEndpointDeps } from './upload-endpoint';
 
 export interface HostDeps {
@@ -73,115 +68,6 @@ function getBearerToken(req: Request): string | null {
   return token || null;
 }
 
-async function handleImgchestPost(req: Request, deps?: HostDeps): Promise<Response> {
-  const token = getBearerToken(req) ?? getImgchestToken();
-  if (!token) {
-    return new Response(JSON.stringify({
-      error: 'Imgchest API token not found. Provide a custom API key in the UI or set IMGCHEST_API_TOKEN environment variable in .env file'
-    }), {
-      headers: { 'Content-Type': 'application/json' },
-      status: 401,
-    });
-  }
-
-  const formData = await req.formData();
-  const images = formData.getAll('images[]') as File[];
-
-  if (images.length === 0) {
-    return new Response(JSON.stringify({ error: 'No images provided' }), {
-      headers: { 'Content-Type': 'application/json' },
-      status: 400,
-    });
-  }
-
-  const title = formData.get('title') as string | null;
-  const privacy = formData.get('privacy') as string | null;
-  const nsfwRaw = formData.get('nsfw') as string | null;
-
-  if (privacy !== null && !['public', 'hidden', 'secret'].includes(privacy)) {
-    return new Response(JSON.stringify({ error: 'Invalid privacy value. Must be public, hidden, or secret.' }), {
-      headers: { 'Content-Type': 'application/json' },
-      status: 400,
-    });
-  }
-
-  const store = deps?.store ?? new FileRateLimitStore(RATE_LIMIT_FILE);
-  const result = await uploadToImgchest({
-    images,
-    token,
-    title: title ?? undefined,
-    privacy: privacy ?? undefined,
-    nsfw: nsfwRaw !== null ? nsfwRaw === 'true' || nsfwRaw === '1' : undefined,
-  }, { fetch: deps?.fetch, store });
-
-  return new Response(JSON.stringify(result.body), {
-    headers: { 'Content-Type': 'application/json', ...buildRateLimitHeaders(result.rateLimitHeaders) },
-    status: result.status,
-  });
-}
-
-async function handleImgchestAdd(req: Request, deps?: HostDeps): Promise<Response> {
-  const url = new URL(req.url);
-  const pathParts = url.pathname.split('/');
-  const postId = pathParts[4];
-
-  const token = getBearerToken(req) ?? getImgchestToken();
-  if (!token) {
-    return new Response(JSON.stringify({ error: 'Imgchest API token not found. Provide a custom API key in the UI or set IMGCHEST_API_TOKEN environment variable.' }), {
-      headers: { 'Content-Type': 'application/json' },
-      status: 401,
-    });
-  }
-
-  const formData = await req.formData();
-  const images = formData.getAll('images[]') as File[];
-  const privacyRaw = formData.get('privacy') as string | null;
-  const nsfwRaw = formData.get('nsfw') as string | null;
-  const privacy = privacyRaw && privacyRaw.trim() !== '' ? privacyRaw.trim() : null;
-  const nsfw = nsfwRaw && nsfwRaw.trim() !== '' ? nsfwRaw.trim() : null;
-
-  if (privacy !== null && !['public', 'hidden', 'secret'].includes(privacy)) {
-    return new Response(JSON.stringify({ error: 'Invalid privacy value. Must be public, hidden, or secret.' }), {
-      headers: { 'Content-Type': 'application/json' },
-      status: 400,
-    });
-  }
-
-  if (images.length === 0) {
-    return new Response(JSON.stringify({ error: 'No images provided' }), {
-      headers: { 'Content-Type': 'application/json' },
-      status: 400,
-    });
-  }
-
-  const store = deps?.store ?? new FileRateLimitStore(RATE_LIMIT_FILE);
-  const result = await uploadToImgchest({
-    images,
-    token,
-    existingPostId: postId,
-    privacy: privacy ?? undefined,
-    nsfw: nsfw !== null ? nsfw === 'true' || nsfw === '1' : undefined,
-  }, { fetch: deps?.fetch, store });
-
-  return new Response(JSON.stringify(result.body), {
-    headers: { 'Content-Type': 'application/json', ...buildRateLimitHeaders(result.rateLimitHeaders) },
-    status: result.status,
-  });
-}
-
-function buildRateLimitHeaders(rlh: RateLimitHeaders | undefined): Record<string, string> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-
-  if (rlh?.limit !== undefined) headers['X-RateLimit-Limit'] = String(rlh.limit);
-  if (rlh?.remaining !== undefined) headers['X-RateLimit-Remaining'] = String(rlh.remaining);
-  if (rlh?.reset !== undefined) headers['X-RateLimit-Reset'] = String(rlh.reset);
-  if (rlh?.resetAfter !== undefined) headers['X-RateLimit-Reset-After'] = String(rlh.resetAfter);
-  if (rlh?.bucket !== undefined) headers['X-RateLimit-Bucket'] = rlh.bucket;
-  if (rlh?.isGlobal) headers['X-RateLimit-Global'] = 'true';
-
-  return headers;
-}
-
 async function handleRequest(req: Request, hostDeps: HostDeps = {}): Promise<Response> {
   const url = new URL(req.url);
   const method = req.method;
@@ -192,18 +78,13 @@ async function handleRequest(req: Request, hostDeps: HostDeps = {}): Promise<Res
       corsHeaders: getCorsHeaders(req.headers.get('Origin')),
       fetch: hostDeps.fetch,
       store: hostDeps.store ?? new FileRateLimitStore(RATE_LIMIT_FILE),
-      secrets: { kekApiKey: getKekKey() ?? undefined },
+      secrets: {
+        kekApiKey: getKekKey() ?? undefined,
+        imgchestToken: getBearerToken(req) ?? getImgchestToken() ?? undefined,
+      },
     };
     const result = await handleUploadRequest(req, deps);
     if (result) return result;
-  }
-
-  if (method === 'POST' && path === '/upload/imgchest/post') {
-    return handleImgchestPost(req);
-  }
-
-  if (method === 'POST' && path.startsWith('/upload/imgchest/post/') && path.endsWith('/add')) {
-    return handleImgchestAdd(req);
   }
 
   const staticPath = safeStaticPath(path);
@@ -304,7 +185,4 @@ export {
   getImgchestToken,
   getKekKey,
   handleRequest,
-  handleImgchestPost,
-  handleImgchestAdd,
-  MAX_IMGCHEST_IMAGES_PER_REQUEST,
 };
