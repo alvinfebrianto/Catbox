@@ -4,6 +4,7 @@ import {
   readKekUploadInputWithOptions,
   KekProviderInputError,
 } from '../providers/kek';
+import { SxcuUploadInput } from '../providers/sxcu';
 import { validateFiles, validateKekFiles } from '../types';
 
 export interface CatboxRequestResult {
@@ -85,4 +86,39 @@ export async function readKekRequest(
   }
 
   return { ok: true, input };
+}
+
+export interface SxcuRequestResult {
+  ok: true;
+  input: SxcuUploadInput;
+}
+
+export interface SxcuRequestError {
+  ok: false;
+  error: string;
+}
+
+export type SxcuRequestShaping = SxcuRequestResult | SxcuRequestError;
+
+export async function readSxcuRequest(
+  formData: FormData,
+  type: SxcuUploadInput['type'],
+): Promise<SxcuRequestShaping> {
+  if (type === 'file') {
+    const files = formData.getAll('file').filter((f): f is File => f instanceof File);
+    const validation = validateFiles(files);
+    if (!validation.ok) {
+      return { ok: false, error: validation.error! };
+    }
+
+    return { ok: true, input: { type, formData } };
+  }
+
+  const shaped = new FormData();
+  for (const key of ['title', 'desc', 'private', 'unlisted'] as const) {
+    const value = formData.get(key);
+    if (value !== null) shaped.append(key, value);
+  }
+
+  return { ok: true, input: { type, formData: shaped } };
 }

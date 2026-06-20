@@ -1,5 +1,6 @@
 import { test, expect, describe, vi, afterEach } from 'vitest';
 import { handleUploadRequest, type UploadEndpointDeps } from '../src/upload-endpoint';
+import { MemoryRateLimitStore } from '../src/rate-limit/engine';
 
 function makeDeps(overrides: Partial<UploadEndpointDeps> = {}): UploadEndpointDeps {
   return {
@@ -302,4 +303,124 @@ describe('kek request shaping and validation', () => {
     const body = await response!.json() as { error: string };
     expect(body.error).toBe('Network failure');
   }, 60000);
+});
+
+describe('sxcu request shaping, rate limiting, and response shaping', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test('matches both sxcu routes and branches files versus collections', async () => {
+    const seenUrls: string[] = [];
+    const seenBodies: FormData[] = [];
+    const fetch = vi.fn(async (url, init) => {
+      seenUrls.push(String(url));
+      seenBodies.push((init as RequestInit).body as FormData);
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+    const store = new MemoryRateLimitStore();
+
+    const fileData = new FormData();
+    fileData.append('file', new File(['content'], 'test.png', { type: 'image/png' }));
+    const filesReq = new Request('http://localhost:3000/upload/sxcu/files', { method: 'POST', body: fileData });
+
+    const collectionData = new FormData();
+    collectionData.append('title', 'My Collection');
+    collectionData.append('desc', 'A description');
+    collectionData.append('private', 'true');
+    collectionData.append('unlisted', 'false');
+    const collectionsReq = new Request('http://localhost:3000/upload/sxcu/collections', { method: 'POST', body: collectionData });
+
+    const filesRes = await handleUploadRequest(filesReq, makeDeps({ fetch, store }));
+    const collectionsRes = await handleUploadRequest(collectionsReq, makeDeps({ fetch }));
+
+    expect(filesRes).not.toBeNull();
+    expect(collectionsRes).not.toBeNull();
+    expect(seenUrls).toEqual([
+      'https://sxcu.net/api/files/create',
+      'https://sxcu.net/api/collections/create',
+    ]);
+    expect(seenBodies[0].get('file')).toBeInstanceOf(File);
+    expect(seenBodies[1].get('title')).toBe('My Collection');
+    expect(seenBodies[1].get('desc')).toBe('A description');
+    expect(seenBodies[1].get('private')).toBe('true');
+    expect(seenBodies[1].get('unlisted')).toBe('false');
+    expect(seenBodies[1].get('file')).toBeNull();
+  });
+
+  test('enforces sxcu file validation before the provider call', async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    const formData = new FormData();
+    formData.append('file', new File(['content'], 'bad.exe', { type: 'application/x-msdownload' }));
+
+    const req = new Request('http://localhost:3000/upload/sxcu/files', { method: 'POST', body: formData });
+    const response = await handleUploadRequest(req, makeDeps({ fetch, store: new MemoryRateLimitStore() }));
+
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(400);
+    expect(fetch).not.toHaveBeenCalled();
+    const body = await response!.json() as { error: string };
+    expect(body.error).toContain('Disallowed file type');
+  });
+
+  test('returns a defensive 500 when sxcu files have no rate-limit store', async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    const formData = new FormData();
+    formData.append('file', new File(['content'], 'test.png', { type: 'image/png' }));
+
+    const req = new Request('http://localhost:3000/upload/sxcu/files', { method: 'POST', body: formData });
+    const response = await handleUploadRequest(req, makeDeps({ fetch }));
+
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(500);
+    expect(fetch).not.toHaveBeenCalled();
+    const body = await response!.json() as { error: string };
+    expect(body.error).toContain('Rate-limit store not configured');
+  });
+
+  test('passes sxcu 2xx statuses through without collapsing to 200', async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ collection_id: 'abc' }), { status: 201 }));
+    const formData = new FormData();
+    formData.append('title', 'My Collection');
+    formData.append('private', 'false');
+    formData.append('unlisted', 'true');
+
+    const req = new Request('http://localhost:3000/upload/sxcu/collections', { method: 'POST', body: formData });
+    const response = await handleUploadRequest(req, makeDeps({ fetch }));
+
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(201);
+    expect(await response!.json()).toEqual({ collection_id: 'abc' });
+  });
+
+  test('projects sxcu rate-limit headers and preserves body-detected global 429', async () => {
+    const fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ error: 'Global rate limit exceeded', code: 2 }), {
+        status: 429,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': '240',
+          'X-RateLimit-Remaining': '0',
+          'X-RateLimit-Reset': '1700000000',
+          'X-RateLimit-Reset-After': '30',
+          'X-RateLimit-Bucket': 'global',
+        },
+      })
+    );
+    const formData = new FormData();
+    formData.append('file', new File(['content'], 'test.png', { type: 'image/png' }));
+
+    const req = new Request('http://localhost:3000/upload/sxcu/files', { method: 'POST', body: formData });
+    const response = await handleUploadRequest(req, makeDeps({ fetch, store: new MemoryRateLimitStore() }));
+
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(429);
+    expect(response!.headers.get('X-RateLimit-Limit')).toBe('240');
+    expect(response!.headers.get('X-RateLimit-Remaining')).toBe('0');
+    expect(response!.headers.get('X-RateLimit-Reset')).toBe('1700000000');
+    expect(response!.headers.get('X-RateLimit-Reset-After')).toBe('30');
+    expect(response!.headers.get('X-RateLimit-Bucket')).toBe('global');
+    expect(response!.headers.get('X-RateLimit-Global')).toBe('true');
+    expect(await response!.json()).toEqual({ error: 'Global rate limit exceeded', code: 2 });
+  });
 });

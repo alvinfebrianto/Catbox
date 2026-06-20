@@ -8,10 +8,9 @@ import {
   MAX_IMGCHEST_IMAGES_PER_REQUEST,
   getCorsHeaders,
 } from './types';
-import { FAIL_FAST_RATE_LIMIT_POLICY, RateLimitStore, executeRateLimited } from './rate-limit/engine';
+import { RateLimitStore } from './rate-limit/engine';
 import { FileRateLimitStore } from './rate-limit/file-store';
 import { FetchLike } from './provider-protocol';
-import { SxcuUploadInput, uploadToSxcu } from './providers/sxcu';
 import { uploadToImgchest } from './providers/imgchest';
 import { handleUploadRequest, type UploadEndpointDeps } from './upload-endpoint';
 
@@ -72,58 +71,6 @@ function getBearerToken(req: Request): string | null {
   const m = raw.match(/^Bearer\s+(.+)$/i);
   const token = (m ? m[1] : raw).trim();
   return token || null;
-}
-
-async function handleSxcuCollections(req: Request, deps?: HostDeps): Promise<Response> {
-  const formData = await req.formData();
-
-  const input: SxcuUploadInput = { type: 'collection', formData };
-  const store = deps?.store ?? new FileRateLimitStore(RATE_LIMIT_FILE);
-
-  const result = await executeRateLimited({
-    provider: 'sxcu',
-    policy: FAIL_FAST_RATE_LIMIT_POLICY,
-    store,
-    operation: () => uploadToSxcu(input, { fetch: deps?.fetch }),
-  });
-
-  if (result.type === 'error') {
-    return new Response(JSON.stringify({ error: result.error }), {
-      headers: { 'Content-Type': 'application/json' },
-      status: 500,
-    });
-  }
-
-  return new Response(JSON.stringify(result.providerResult.body), {
-    headers: buildRateLimitHeaders(result.providerResult.rateLimitHeaders),
-    status: result.providerResult.status,
-  });
-}
-
-async function handleSxcuFiles(req: Request, deps?: HostDeps): Promise<Response> {
-  const formData = await req.formData();
-
-  const input: SxcuUploadInput = { type: 'file', formData };
-  const store = deps?.store ?? new FileRateLimitStore(RATE_LIMIT_FILE);
-
-  const result = await executeRateLimited({
-    provider: 'sxcu',
-    policy: FAIL_FAST_RATE_LIMIT_POLICY,
-    store,
-    operation: () => uploadToSxcu(input, { fetch: deps?.fetch }),
-  });
-
-  if (result.type === 'error') {
-    return new Response(JSON.stringify({ error: result.error }), {
-      headers: { 'Content-Type': 'application/json' },
-      status: 500,
-    });
-  }
-
-  return new Response(JSON.stringify(result.providerResult.body), {
-    headers: buildRateLimitHeaders(result.providerResult.rateLimitHeaders),
-    status: result.providerResult.status,
-  });
 }
 
 async function handleImgchestPost(req: Request, deps?: HostDeps): Promise<Response> {
@@ -235,7 +182,7 @@ function buildRateLimitHeaders(rlh: RateLimitHeaders | undefined): Record<string
   return headers;
 }
 
-async function handleRequest(req: Request): Promise<Response> {
+async function handleRequest(req: Request, hostDeps: HostDeps = {}): Promise<Response> {
   const url = new URL(req.url);
   const method = req.method;
   const path = url.pathname;
@@ -243,19 +190,12 @@ async function handleRequest(req: Request): Promise<Response> {
   if (method === 'POST') {
     const deps: UploadEndpointDeps = {
       corsHeaders: getCorsHeaders(req.headers.get('Origin')),
-      fetch: undefined,
+      fetch: hostDeps.fetch,
+      store: hostDeps.store ?? new FileRateLimitStore(RATE_LIMIT_FILE),
       secrets: { kekApiKey: getKekKey() ?? undefined },
     };
     const result = await handleUploadRequest(req, deps);
     if (result) return result;
-  }
-
-  if (method === 'POST' && path === '/upload/sxcu/collections') {
-    return handleSxcuCollections(req);
-  }
-
-  if (method === 'POST' && path === '/upload/sxcu/files') {
-    return handleSxcuFiles(req);
   }
 
   if (method === 'POST' && path === '/upload/imgchest/post') {
@@ -363,8 +303,7 @@ if (isMain) {
 export {
   getImgchestToken,
   getKekKey,
-  handleSxcuCollections,
-  handleSxcuFiles,
+  handleRequest,
   handleImgchestPost,
   handleImgchestAdd,
   MAX_IMGCHEST_IMAGES_PER_REQUEST,

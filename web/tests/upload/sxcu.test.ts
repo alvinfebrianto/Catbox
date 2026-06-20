@@ -95,6 +95,7 @@ describe('uploadToSxcu', () => {
     expect(collectionBody.get('title')).toBe('My Collection');
     expect(collectionBody.get('desc')).toBe('A description');
     expect(collectionBody.get('private')).toBe('true');
+    expect(collectionBody.get('unlisted')).toBe('false');
 
     const [fileUrl, fileInit] = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
     expect(fileUrl).toBe('https://proxy.test/upload/sxcu/files');

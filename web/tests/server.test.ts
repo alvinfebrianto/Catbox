@@ -1,8 +1,7 @@
 import { test, expect, describe, vi, afterEach } from 'vitest';
 import {
   getImgchestToken,
-  handleSxcuCollections,
-  handleSxcuFiles,
+  handleRequest,
   handleImgchestPost,
   handleImgchestAdd,
   MAX_IMGCHEST_IMAGES_PER_REQUEST,
@@ -58,21 +57,20 @@ describe('Token management', () => {
 });
 
 describe('SXCU upload handlers', () => {
-  test('creates collection and returns result', async () => {
+  test('delegates collection uploads through the upload endpoint module', async () => {
     const fetch = vi.fn(async () => jsonResponse({ id: 'coll123' }));
-    const store = new MemoryRateLimitStore();
 
     const formData = makeFormData({ title: 'My Collection' });
     const req = new Request('http://localhost:3000/upload/sxcu/collections', { method: 'POST', body: formData });
 
-    const response = await handleSxcuCollections(req, { fetch, store });
+    const response = await handleRequest(req, { fetch });
     const body = await response.json() as { id: string };
 
     expect(response.status).toBe(200);
     expect(body.id).toBe('coll123');
   });
 
-  test('uploads file and returns result', async () => {
+  test('delegates file uploads through the upload endpoint module with rate-limit store', async () => {
     const fetch = vi.fn(async () => jsonResponse(
       { url: 'https://sxcu.net/abc' },
       { headers: { 'X-RateLimit-Remaining': '58', 'X-RateLimit-Limit': '60' } }
@@ -82,7 +80,7 @@ describe('SXCU upload handlers', () => {
     const formData = makeFormData({ file: new File(['content'], 'test.png', { type: 'image/png' }) });
     const req = new Request('http://localhost:3000/upload/sxcu/files', { method: 'POST', body: formData });
 
-    const response = await handleSxcuFiles(req, { fetch, store });
+    const response = await handleRequest(req, { fetch, store });
     expect(response.status).toBe(200);
   });
 });

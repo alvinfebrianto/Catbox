@@ -205,6 +205,7 @@ export function uploadToSxcu(
     formData.append('title', input.title || 'Untitled');
     formData.append('desc', input.description);
     formData.append('private', input.private ? 'true' : 'false');
+    formData.append('unlisted', 'false');
 
     try {
       const response = await fetchFn(input.apiBaseUrl + '/upload/sxcu/collections', {

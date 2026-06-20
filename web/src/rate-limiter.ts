@@ -1,12 +1,11 @@
 import {
   RateLimitHeaders,
   getCorsHeaders,
-  validateFiles,
   validateImgchestFiles,
 } from './types';
-import { FAIL_FAST_RATE_LIMIT_POLICY, DurableObjectRateLimitStore, executeRateLimited } from './rate-limit/engine';
-import { SxcuUploadInput, uploadToSxcu } from './providers/sxcu';
+import { DurableObjectRateLimitStore } from './rate-limit/engine';
 import { uploadToImgchest } from './providers/imgchest';
+import { handleUploadRequest } from './upload-endpoint';
 
 export class RateLimiter {
   state: DurableObjectState;
@@ -38,11 +37,19 @@ export class RateLimiter {
       }
 
       if (method === 'POST' && path === '/upload/sxcu/collections') {
-        return await this.handleSxcuCollections(request, corsHeaders);
+        const response = await handleUploadRequest(request, {
+          corsHeaders,
+          store: new DurableObjectRateLimitStore(this.storage),
+        });
+        if (response) return response;
       }
 
       if (method === 'POST' && path === '/upload/sxcu/files') {
-        return await this.handleSxcuFiles(request, corsHeaders);
+        const response = await handleUploadRequest(request, {
+          corsHeaders,
+          store: new DurableObjectRateLimitStore(this.storage),
+        });
+        if (response) return response;
       }
 
       return new Response('Not Found', { status: 404, headers: corsHeaders });
@@ -179,66 +186,4 @@ export class RateLimiter {
     });
   }
 
-  private async handleSxcuCollections(request: Request, corsHeaders: Record<string, string>): Promise<Response> {
-    const formData = await request.formData();
-
-    const input: SxcuUploadInput = { type: 'collection', formData };
-    const store = new DurableObjectRateLimitStore(this.storage);
-
-    const result = await executeRateLimited({
-      provider: 'sxcu',
-      policy: FAIL_FAST_RATE_LIMIT_POLICY,
-      store,
-      operation: () => uploadToSxcu(input),
-    });
-
-    if (result.type === 'error') {
-      return new Response(JSON.stringify({ error: result.error }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 500,
-      });
-    }
-
-    return new Response(JSON.stringify(result.providerResult.body), {
-      headers: this.createResponseHeadersFromProvider(result.providerResult.rateLimitHeaders, corsHeaders),
-      status: result.providerResult.status,
-    });
-  }
-
-  private async handleSxcuFiles(request: Request, corsHeaders: Record<string, string>): Promise<Response> {
-    const formData = await request.formData();
-    const files = formData.getAll('file') as File[];
-
-    if (files.length > 0) {
-      const validation = validateFiles(files);
-      if (!validation.ok) {
-        return new Response(JSON.stringify({ error: validation.error }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          status: 400,
-        });
-      }
-    }
-
-    const input: SxcuUploadInput = { type: 'file', formData };
-    const store = new DurableObjectRateLimitStore(this.storage);
-
-    const result = await executeRateLimited({
-      provider: 'sxcu',
-      policy: FAIL_FAST_RATE_LIMIT_POLICY,
-      store,
-      operation: () => uploadToSxcu(input),
-    });
-
-    if (result.type === 'error') {
-      return new Response(JSON.stringify({ error: result.error }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 500,
-      });
-    }
-
-    return new Response(JSON.stringify(result.providerResult.body), {
-      headers: this.createResponseHeadersFromProvider(result.providerResult.rateLimitHeaders, corsHeaders),
-      status: result.providerResult.status,
-    });
-  }
 }
