@@ -514,7 +514,6 @@ export class ImageUploader {
       onResult: (result, index) => this.addIncrementalResult(result, index),
       onProgress: (percent, label) => this.updateProgress(percent, label),
       onRateLimitWait,
-      onDone: () => {},
     };
   }
 

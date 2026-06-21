@@ -19,7 +19,6 @@ export function uploadToImgchest(
         if (!validation.ok) {
           const result: UploadResult = { type: 'error', message: validation.error || 'Invalid files' };
           observer.onResult(result, 0);
-          observer.onDone([result]);
           resolve([result]);
           return;
         }
@@ -31,7 +30,6 @@ export function uploadToImgchest(
       }
 
       if (filesToUpload.length === 0) {
-        observer.onDone([]);
         resolve([]);
         return;
       }
@@ -101,14 +99,12 @@ function uploadBatch(
         }
 
         observer.onProgress(100, 'Done!');
-        observer.onDone(results);
         resolve(results);
       } catch (e) {
         const result: UploadResult = { type: 'error', message: 'Failed to upload: ' + (e as Error).message };
         results.push(result);
         observer.onResult(result, results.length - 1);
         observer.onProgress(100, 'Done!');
-        observer.onDone(results);
         resolve(results);
       }
     })
@@ -117,7 +113,6 @@ function uploadBatch(
       results.push(result);
       observer.onResult(result, results.length - 1);
       observer.onProgress(100, 'Done!');
-      observer.onDone(results);
       resolve(results);
     });
 }
@@ -141,7 +136,6 @@ function uploadProgressiveAddToPost(
   const uploadNextFile = (index: number): void => {
     if (index >= files.length) {
       observer.onProgress(100, 'Done!');
-      observer.onDone(results);
       resolve(results);
       return;
     }
@@ -230,7 +224,6 @@ function uploadProgressive(
   const uploadNextFile = (index: number): void => {
     if (index >= files.length) {
       observer.onProgress(100, 'Done!');
-      observer.onDone(results);
       resolve(results);
       return;
     }
@@ -291,7 +284,6 @@ function uploadProgressive(
 
           if (isFirst) {
             observer.onProgress(100, 'Done!');
-            observer.onDone(results);
             resolve(results);
           } else {
             completedFiles++;
@@ -307,7 +299,6 @@ function uploadProgressive(
 
         if (isFirst) {
           observer.onProgress(100, 'Done!');
-          observer.onDone(results);
           resolve(results);
         } else {
           completedFiles++;

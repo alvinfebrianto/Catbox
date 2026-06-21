@@ -20,7 +20,6 @@ export function uploadToKek(
     if (!validation.ok) {
       const result: UploadResult = { type: 'error', message: validation.error || 'Invalid files' };
       observer.onResult(result, 0);
-      observer.onDone([result]);
       resolve([result]);
       return;
     }
@@ -33,7 +32,6 @@ export function uploadToKek(
   ];
 
   if (queue.length === 0) {
-    observer.onDone([]);
     resolve([]);
     return;
   }
@@ -44,7 +42,6 @@ export function uploadToKek(
   const processNext = (index: number): void => {
     if (index >= queue.length) {
       observer.onProgress(100, 'Done!');
-      observer.onDone(results);
       resolve(results);
       return;
     }

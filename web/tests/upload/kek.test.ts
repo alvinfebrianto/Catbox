@@ -34,8 +34,7 @@ describe('uploadToKek', () => {
       urls: ['https://example.com/remote.png'],
     });
 
-    uploadToKek(input, observer, fetchMock as unknown as typeof fetch);
-    await vi.waitFor(() => expect(observer.doneWith).toHaveLength(1));
+    const results = await uploadToKek(input, observer, fetchMock as unknown as typeof fetch);
 
     // file first, then url
     const [fileUrl, fileInit] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
@@ -58,8 +57,8 @@ describe('uploadToKek', () => {
       { result: { type: 'success', url: 'https://i.kek.sh/dog.png' }, index: 1 },
     ]);
 
-    // onDone fires with the full canonical array
-    expect(observer.doneWith[0]).toEqual([
+    // promise resolves with the full canonical array
+    expect(results).toEqual([
       { type: 'success', url: 'https://i.kek.sh/cat.png' },
       { type: 'success', url: 'https://i.kek.sh/dog.png' },
     ]);
@@ -77,8 +76,7 @@ describe('uploadToKek', () => {
       mature: true,
     });
 
-    uploadToKek(input, observer, fetchMock as unknown as typeof fetch);
-    await vi.waitFor(() => expect(observer.doneWith).toHaveLength(1));
+    await uploadToKek(input, observer, fetchMock as unknown as typeof fetch);
 
     const formData = (fetchMock.mock.calls[0][1] as RequestInit).body as FormData;
     expect(formData.get('mature')).toBe('true');
@@ -95,8 +93,7 @@ describe('uploadToKek', () => {
       mature: false,
     });
 
-    uploadToKek(input, observer, fetchMock as unknown as typeof fetch);
-    await vi.waitFor(() => expect(observer.doneWith).toHaveLength(1));
+    await uploadToKek(input, observer, fetchMock as unknown as typeof fetch);
 
     const formData = (fetchMock.mock.calls[0][1] as RequestInit).body as FormData;
     expect(formData.get('mature')).toBe('false');
@@ -113,8 +110,7 @@ describe('uploadToKek', () => {
       apiKey: 'my-secret-key',
     });
 
-    uploadToKek(input, observer, fetchMock as unknown as typeof fetch);
-    await vi.waitFor(() => expect(observer.doneWith).toHaveLength(1));
+    await uploadToKek(input, observer, fetchMock as unknown as typeof fetch);
 
     const headers = (fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>;
     expect(headers['X-Kek-Auth']).toBe('my-secret-key');
@@ -130,8 +126,7 @@ describe('uploadToKek', () => {
       files: [new File(['x'], 'cat.png', { type: 'image/png' })],
     });
 
-    uploadToKek(input, observer, fetchMock as unknown as typeof fetch);
-    await vi.waitFor(() => expect(observer.doneWith).toHaveLength(1));
+    await uploadToKek(input, observer, fetchMock as unknown as typeof fetch);
 
     const headers = (fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>;
     expect(headers['X-Kek-Auth']).toBeUndefined();
@@ -147,10 +142,9 @@ describe('uploadToKek', () => {
       files: [new File(['x'], 'photo.png', { type: 'image/png' })],
     });
 
-    uploadToKek(input, observer, fetchMock as unknown as typeof fetch);
-    await vi.waitFor(() => expect(observer.doneWith).toHaveLength(1));
+    const results = await uploadToKek(input, observer, fetchMock as unknown as typeof fetch);
 
-    expect(observer.doneWith[0][0]).toEqual({
+    expect(results[0]).toEqual({
       type: 'success',
       url: 'https://i.kek.sh/my-photo.png',
     });
@@ -166,10 +160,9 @@ describe('uploadToKek', () => {
       files: [new File(['x'], 'bad.png', { type: 'image/png' })],
     });
 
-    uploadToKek(input, observer, fetchMock as unknown as typeof fetch);
-    await vi.waitFor(() => expect(observer.doneWith).toHaveLength(1));
+    const results = await uploadToKek(input, observer, fetchMock as unknown as typeof fetch);
 
-    expect(observer.doneWith[0][0]).toEqual({
+    expect(results[0]).toEqual({
       type: 'error',
       message: 'Failed to upload bad.png: File type not allowed',
     });
@@ -185,10 +178,9 @@ describe('uploadToKek', () => {
       files: [new File(['x'], 'cat.png', { type: 'image/png' })],
     });
 
-    uploadToKek(input, observer, fetchMock as unknown as typeof fetch);
-    await vi.waitFor(() => expect(observer.doneWith).toHaveLength(1));
+    const results = await uploadToKek(input, observer, fetchMock as unknown as typeof fetch);
 
-    expect(observer.doneWith[0][0].type).toBe('error');
+    expect(results[0].type).toBe('error');
   });
 
   test('continues on per-item error and completes remaining items', async () => {
@@ -205,10 +197,9 @@ describe('uploadToKek', () => {
       ],
     });
 
-    uploadToKek(input, observer, fetchMock as unknown as typeof fetch);
-    await vi.waitFor(() => expect(observer.doneWith).toHaveLength(1));
+    const results = await uploadToKek(input, observer, fetchMock as unknown as typeof fetch);
 
-    expect(observer.doneWith[0]).toEqual([
+    expect(results).toEqual([
       { type: 'error', message: 'Failed to upload first.png: first failed' },
       { type: 'success', url: 'https://i.kek.sh/second.png' },
     ]);
@@ -227,8 +218,7 @@ describe('uploadToKek', () => {
       authHeaders: { Authorization: 'Bearer test-token' },
     });
 
-    uploadToKek(input, observer, fetchMock as unknown as typeof fetch);
-    await vi.waitFor(() => expect(observer.doneWith).toHaveLength(1));
+    await uploadToKek(input, observer, fetchMock as unknown as typeof fetch);
 
     for (const call of fetchMock.mock.calls) {
       const init = call[1] as RequestInit;
@@ -246,14 +236,13 @@ describe('uploadToKek', () => {
       files: [new File(['x'], 'cat.png', { type: 'image/png' })],
     });
 
-    uploadToKek(input, observer, fetchMock as unknown as typeof fetch);
-    await vi.waitFor(() => expect(observer.doneWith).toHaveLength(1));
+    const results = await uploadToKek(input, observer, fetchMock as unknown as typeof fetch);
 
-    expect(observer.doneWith[0][0].type).toBe('error');
-    expect((observer.doneWith[0][0] as { message?: string }).message).toContain('cat.png');
+    expect(results[0].type).toBe('error');
+    expect((results[0] as { message?: string }).message).toContain('cat.png');
   });
 
-  test('resolves the returned promise with the full results array (alongside onDone)', async () => {
+  test('resolves the returned promise with the full results array', async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(jsonResponse({ filename: 'a.png' }));
@@ -264,8 +253,6 @@ describe('uploadToKek', () => {
     const resolved = await uploadToKek(input, observer, fetchMock as unknown as typeof fetch);
 
     expect(resolved).toEqual([{ type: 'success', url: 'https://i.kek.sh/a.png' }]);
-    expect(observer.doneWith).toHaveLength(1);
-    expect(observer.doneWith[0]).toEqual(resolved);
   });
 
   test('resolves with an empty array when there is nothing to upload', async () => {

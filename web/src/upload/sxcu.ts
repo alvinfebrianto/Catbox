@@ -67,7 +67,6 @@ export function uploadToSxcu(
 
   const finish = (): void => {
     observer.onProgress(100, 'Done!');
-    observer.onDone(results);
     resolve(results);
   };
 

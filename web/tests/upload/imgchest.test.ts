@@ -51,8 +51,7 @@ describe('uploadToImgchest', () => {
       anonymous: true,
     });
 
-    uploadToImgchest(input, observer, fetchMock as unknown as typeof fetch);
-    await vi.waitFor(() => expect(observer.doneWith).toHaveLength(1));
+    const results = await uploadToImgchest(input, observer, fetchMock as unknown as typeof fetch);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [reqUrl, reqInit] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
@@ -71,7 +70,7 @@ describe('uploadToImgchest', () => {
       { result: { type: 'success', url: 'https://imgchest.com/i/img2.png' }, index: 2 },
     ]);
 
-    expect(observer.doneWith[0]).toHaveLength(3);
+    expect(results).toHaveLength(3);
     expect(observer.progress.at(-1)).toEqual({ percent: 100, label: 'Done!' });
   });
 
@@ -96,8 +95,7 @@ describe('uploadToImgchest', () => {
       ],
     });
 
-    uploadToImgchest(input, observer, fetchMock as unknown as typeof fetch);
-    await vi.waitFor(() => expect(observer.doneWith).toHaveLength(1));
+    const results = await uploadToImgchest(input, observer, fetchMock as unknown as typeof fetch);
 
     // First call creates a post
     const [createUrl, createInit] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
@@ -130,13 +128,12 @@ describe('uploadToImgchest', () => {
       ],
     });
 
-    uploadToImgchest(input, observer, fetchMock as unknown as typeof fetch);
-    await vi.waitFor(() => expect(observer.doneWith).toHaveLength(1));
+    const results = await uploadToImgchest(input, observer, fetchMock as unknown as typeof fetch);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(observer.doneWith[0]).toHaveLength(1);
-    expect(observer.doneWith[0][0].type).toBe('error');
-    expect(observer.doneWith[0][0].message).toContain('a.png');
+    expect(results).toHaveLength(1);
+    expect(results[0].type).toBe('error');
+    expect(results[0].message).toContain('a.png');
   });
 
   test('progressive flow: later-file failure continues to next file', async () => {
@@ -161,16 +158,15 @@ describe('uploadToImgchest', () => {
       ],
     });
 
-    uploadToImgchest(input, observer, fetchMock as unknown as typeof fetch);
-    await vi.waitFor(() => expect(observer.doneWith).toHaveLength(1));
+    const results = await uploadToImgchest(input, observer, fetchMock as unknown as typeof fetch);
 
     expect(fetchMock).toHaveBeenCalledTimes(3);
     // Results: isPost(post1), a.png(success), b.png(error), c.png(success)
-    expect(observer.doneWith[0]).toHaveLength(4);
-    expect(observer.doneWith[0][0]).toEqual({ type: 'success', url: 'https://imgchest.com/p/post1', isPost: true });
-    expect(observer.doneWith[0][1].type).toBe('success');
-    expect(observer.doneWith[0][2].type).toBe('error');
-    expect(observer.doneWith[0][3].type).toBe('success');
+    expect(results).toHaveLength(4);
+    expect(results[0]).toEqual({ type: 'success', url: 'https://imgchest.com/p/post1', isPost: true });
+    expect(results[1].type).toBe('success');
+    expect(results[2].type).toBe('error');
+    expect(results[3].type).toBe('success');
   });
 
   test('progressive-add-to-post always continues on error', async () => {
@@ -190,15 +186,14 @@ describe('uploadToImgchest', () => {
       postId: 'existing-post',
     });
 
-    uploadToImgchest(input, observer, fetchMock as unknown as typeof fetch);
-    await vi.waitFor(() => expect(observer.doneWith).toHaveLength(1));
+    const results = await uploadToImgchest(input, observer, fetchMock as unknown as typeof fetch);
 
     // Results: first.png(error), isPost(post1), second.png(success)
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(observer.doneWith[0]).toHaveLength(3);
-    expect(observer.doneWith[0][0].type).toBe('error');
-    expect(observer.doneWith[0][1]).toEqual({ type: 'success', url: 'https://imgchest.com/p/post1', isPost: true });
-    expect(observer.doneWith[0][2].type).toBe('success');
+    expect(results).toHaveLength(3);
+    expect(results[0].type).toBe('error');
+    expect(results[1]).toEqual({ type: 'success', url: 'https://imgchest.com/p/post1', isPost: true });
+    expect(results[2].type).toBe('success');
   });
 
   test('progressive-add-to-post: adds files one by one, emits isPost once, uses existingCount slice', async () => {
@@ -223,8 +218,7 @@ describe('uploadToImgchest', () => {
       postId: 'existing-post',
     });
 
-    uploadToImgchest(input, observer, fetchMock as unknown as typeof fetch);
-    await vi.waitFor(() => expect(observer.doneWith).toHaveLength(1));
+    const results = await uploadToImgchest(input, observer, fetchMock as unknown as typeof fetch);
 
     // Verify proxy URLs and form fields
     const [url1, init1] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
@@ -238,8 +232,8 @@ describe('uploadToImgchest', () => {
 
     // Only one isPost result for the entire flow
     expect(observer.results.filter(r => r.result.isPost)).toHaveLength(1);
-    expect(observer.doneWith[0]).toHaveLength(3);
-    expect(observer.doneWith[0][0]).toEqual({ type: 'success', url: 'https://imgchest.com/p/post1', isPost: true });
+    expect(results).toHaveLength(3);
+    expect(results[0]).toEqual({ type: 'success', url: 'https://imgchest.com/p/post1', isPost: true });
   });
 
   test('batch fails wholesale when server returns an error', async () => {
@@ -253,12 +247,11 @@ describe('uploadToImgchest', () => {
       anonymous: true,
     });
 
-    uploadToImgchest(input, observer, fetchMock as unknown as typeof fetch);
-    await vi.waitFor(() => expect(observer.doneWith).toHaveLength(1));
+    const results = await uploadToImgchest(input, observer, fetchMock as unknown as typeof fetch);
 
-    expect(observer.doneWith[0]).toHaveLength(1);
-    expect(observer.doneWith[0][0].type).toBe('error');
-    expect(observer.doneWith[0][0].message).toContain('Upload limit exceeded');
+    expect(results).toHaveLength(1);
+    expect(results[0].type).toBe('error');
+    expect(results[0].message).toContain('Upload limit exceeded');
   });
 
   test('validation failure emits error immediately without fetching', async () => {
@@ -269,11 +262,10 @@ describe('uploadToImgchest', () => {
       files: [new File(['x'], 'bad.exe', { type: 'application/x-msdownload' })],
     });
 
-    uploadToImgchest(input, observer, fetchMock as unknown as typeof fetch);
-    await vi.waitFor(() => expect(observer.doneWith).toHaveLength(1));
+    const results = await uploadToImgchest(input, observer, fetchMock as unknown as typeof fetch);
 
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(observer.doneWith[0][0].type).toBe('error');
+    expect(results[0].type).toBe('error');
   });
 
   test('anonymous caps files at 20', async () => {
@@ -293,8 +285,7 @@ describe('uploadToImgchest', () => {
     const observer = new RecordingUploadObserver();
     const input = baseInput({ files, anonymous: true });
 
-    uploadToImgchest(input, observer, fetchMock as unknown as typeof fetch);
-    await vi.waitFor(() => expect(observer.doneWith).toHaveLength(1));
+    await uploadToImgchest(input, observer, fetchMock as unknown as typeof fetch);
 
     const formData = (fetchMock.mock.calls[0][1] as RequestInit).body as FormData;
     expect(formData.getAll('images[]')).toHaveLength(20);
@@ -324,8 +315,7 @@ describe('uploadToImgchest', () => {
       nsfw: false,
     });
 
-    uploadToImgchest(input, observer, fetchMock as unknown as typeof fetch);
-    await vi.waitFor(() => expect(observer.doneWith).toHaveLength(1));
+    await uploadToImgchest(input, observer, fetchMock as unknown as typeof fetch);
 
     const createForm = (fetchMock.mock.calls[0][1] as RequestInit).body as FormData;
     expect(createForm.get('title')).toBe('My Post');
@@ -354,14 +344,13 @@ describe('uploadToImgchest', () => {
       apiToken: 'my-token',
     });
 
-    uploadToImgchest(input, observer, fetchMock as unknown as typeof fetch);
-    await vi.waitFor(() => expect(observer.doneWith).toHaveLength(1));
+    await uploadToImgchest(input, observer, fetchMock as unknown as typeof fetch);
 
     const headers = (fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>;
     expect(headers['Authorization']).toBe('Bearer my-token');
   });
 
-  test('resolves the returned promise with the full results array (alongside onDone)', async () => {
+  test('resolves the returned promise with the full results array', async () => {
     const postResponse = {
       data: { id: 'abc', image_count: 1, images: [{ link: 'https://imgchest.com/i/img.png' }] },
     };
@@ -382,8 +371,6 @@ describe('uploadToImgchest', () => {
       { type: 'success', url: 'https://imgchest.com/p/abc', isPost: true },
       { type: 'success', url: 'https://imgchest.com/i/img.png' },
     ]);
-    expect(observer.doneWith).toHaveLength(1);
-    expect(observer.doneWith[0]).toEqual(resolved);
   });
 
   test('resolves with the validation error array when files are invalid', async () => {
@@ -398,7 +385,6 @@ describe('uploadToImgchest', () => {
     expect(resolved).toHaveLength(1);
     expect(resolved[0].type).toBe('error');
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(observer.doneWith[0]).toEqual(resolved);
   });
 
   test('rejects the returned promise on an unexpected throw', async () => {

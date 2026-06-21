@@ -57,19 +57,18 @@ describe('uploadToSxcu', () => {
       ],
     });
 
-    uploadToSxcu(input, observer, fetchMock as unknown as typeof fetch);
+    const promise = uploadToSxcu(input, observer, fetchMock as unknown as typeof fetch);
     await flushPromises();
     expect(fetchMock).toHaveBeenCalledTimes(4);
-    expect(observer.doneWith).toHaveLength(0);
 
     await vi.advanceTimersByTimeAsync(199);
     expect(fetchMock).toHaveBeenCalledTimes(4);
 
     await vi.advanceTimersByTimeAsync(1);
-    await vi.waitFor(() => expect(observer.doneWith).toHaveLength(1));
+    const results = await promise;
 
     expect(fetchMock).toHaveBeenCalledTimes(5);
-    expect(observer.doneWith[0]).toHaveLength(5);
+    expect(results).toHaveLength(5);
     expect(observer.progress.at(-1)).toEqual({ percent: 100, label: 'Done!' });
   });
 
@@ -86,8 +85,7 @@ describe('uploadToSxcu', () => {
       private: true,
     });
 
-    uploadToSxcu(input, observer, fetchMock as unknown as typeof fetch);
-    await vi.waitFor(() => expect(observer.doneWith).toHaveLength(1));
+    const results = await uploadToSxcu(input, observer, fetchMock as unknown as typeof fetch);
 
     const [collectionUrl, collectionInit] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(collectionUrl).toBe('https://proxy.test/upload/sxcu/collections');
@@ -128,17 +126,16 @@ describe('uploadToSxcu', () => {
       files: Array.from({ length: 7 }, (_, i) => new File(['x'], `${i + 1}.png`, { type: 'image/png' })),
     });
 
-    uploadToSxcu(input, observer, fetchMock as unknown as typeof fetch);
+    const promise = uploadToSxcu(input, observer, fetchMock as unknown as typeof fetch);
     await flushPromises();
     expect(fetchMock).toHaveBeenCalledTimes(4);
 
     await vi.advanceTimersByTimeAsync(200);
     await flushPromises();
     expect(fetchMock).toHaveBeenCalledTimes(6);
-    expect(observer.doneWith).toHaveLength(0);
 
     await vi.advanceTimersByTimeAsync(200);
-    await vi.waitFor(() => expect(observer.doneWith).toHaveLength(1));
+    const results = await promise;
     expect(fetchMock).toHaveBeenCalledTimes(7);
   });
 
@@ -171,7 +168,7 @@ describe('uploadToSxcu', () => {
       ],
     });
 
-    uploadToSxcu(input, observer, fetchMock as unknown as typeof fetch);
+    const promise = uploadToSxcu(input, observer, fetchMock as unknown as typeof fetch);
     await flushPromises();
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -186,18 +183,18 @@ describe('uploadToSxcu', () => {
     expect(observer.rateLimitWaits).toEqual([2, 1]);
 
     await vi.advanceTimersByTimeAsync(1000);
-    await vi.waitFor(() => expect(observer.doneWith).toHaveLength(1));
+    const results = await promise;
 
     expect(observer.rateLimitWaits).toEqual([2, 1, 0]);
     expect(fetchMock).toHaveBeenCalledTimes(4);
-    expect(observer.doneWith[0]).toEqual([
+    expect(results).toEqual([
       { type: 'success', url: 'https://sxcu.net/1.png' },
       { type: 'success', url: 'https://sxcu.net/2.png' },
       { type: 'success', url: 'https://sxcu.net/3.png' },
     ]);
   });
 
-  test('resolves the returned promise with the full results array (alongside onDone)', async () => {
+  test('resolves the returned promise with the full results array', async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(jsonResponse({ url: 'https://sxcu.net/1.png' }));
@@ -208,8 +205,6 @@ describe('uploadToSxcu', () => {
     const resolved = await uploadToSxcu(input, observer, fetchMock as unknown as typeof fetch);
 
     expect(resolved).toEqual([{ type: 'success', url: 'https://sxcu.net/1.png' }]);
-    expect(observer.doneWith).toHaveLength(1);
-    expect(observer.doneWith[0]).toEqual(resolved);
   });
 
   test('rejects the returned promise on an unexpected throw', async () => {

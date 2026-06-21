@@ -7,7 +7,6 @@ export interface UploadObserver {
   onProgress(percent: number, label: string): void;
   /** 0 means the wait has resumed and the rate-limit notice should be removed. */
   onRateLimitWait(secondsRemaining: number): void;
-  onDone(results: UploadResult[]): void;
 }
 
 interface UploadInputBase {

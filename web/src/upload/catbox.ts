@@ -4,8 +4,7 @@ import { CatboxUploadInput, UploadObserver } from './contracts';
 /**
  * DOM-free catbox upload sequencer. Owns the canonical results array, drives
  * file + URL upload sequencing, optional album creation, and emits observer
- * events (`onResult` per increment, `onProgress` for the bar, `onDone` at the
- * end). `fetchFn` is injected so tests can stub it.
+ * events (`onResult` per increment, `onProgress` for the bar). `fetchFn` is injected so tests can stub it.
  */
 export function uploadToCatbox(
   input: CatboxUploadInput,
@@ -81,7 +80,6 @@ export function uploadToCatbox(
 
   const finish = (): void => {
     observer.onProgress(100, 'Done!');
-    observer.onDone(results);
     resolve(results);
   };
 
