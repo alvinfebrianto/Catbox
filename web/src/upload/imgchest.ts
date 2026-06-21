@@ -5,41 +5,51 @@ export function uploadToImgchest(
   input: ImgchestUploadInput,
   observer: UploadObserver,
   fetchFn: typeof fetch,
-): void {
-  const { apiBaseUrl, files, urls, authHeaders, title, postId, anonymous, privacy, nsfw, apiToken } = input;
-  const headers: Record<string, string> = { ...authHeaders };
-  if (apiToken) {
-    headers['Authorization'] = 'Bearer ' + apiToken;
-  }
+): Promise<UploadResult[]> {
+  return new Promise<UploadResult[]>((resolve, reject) => {
+    try {
+      const { apiBaseUrl, files, urls, authHeaders, title, postId, anonymous, privacy, nsfw, apiToken } = input;
+      const headers: Record<string, string> = { ...authHeaders };
+      if (apiToken) {
+        headers['Authorization'] = 'Bearer ' + apiToken;
+      }
 
-  if (files.length > 0) {
-    const validation = validateImgchestFiles(files);
-    if (!validation.ok) {
-      const result: UploadResult = { type: 'error', message: validation.error || 'Invalid files' };
-      observer.onResult(result, 0);
-      observer.onDone([result]);
-      return;
+      if (files.length > 0) {
+        const validation = validateImgchestFiles(files);
+        if (!validation.ok) {
+          const result: UploadResult = { type: 'error', message: validation.error || 'Invalid files' };
+          observer.onResult(result, 0);
+          observer.onDone([result]);
+          resolve([result]);
+          return;
+        }
+      }
+
+      let filesToUpload = files.slice();
+      if (anonymous) {
+        filesToUpload = filesToUpload.slice(0, 20);
+      }
+
+      if (filesToUpload.length === 0) {
+        observer.onDone([]);
+        resolve([]);
+        return;
+      }
+
+      if (anonymous) {
+        uploadBatch(apiBaseUrl, filesToUpload, headers, title, privacy, nsfw, observer, fetchFn, resolve);
+      } else if (postId) {
+        uploadProgressiveAddToPost(apiBaseUrl, postId, filesToUpload, headers, privacy, nsfw, observer, fetchFn, resolve);
+      } else {
+        uploadProgressive(apiBaseUrl, filesToUpload, headers, title, privacy, nsfw, observer, fetchFn, resolve);
+      }
+    } catch (error) {
+      reject(error);
     }
-  }
-
-  let filesToUpload = files.slice();
-  if (anonymous) {
-    filesToUpload = filesToUpload.slice(0, 20);
-  }
-
-  if (filesToUpload.length === 0) {
-    observer.onDone([]);
-    return;
-  }
-
-  if (anonymous) {
-    uploadBatch(apiBaseUrl, filesToUpload, headers, title, privacy, nsfw, observer, fetchFn);
-  } else if (postId) {
-    uploadProgressiveAddToPost(apiBaseUrl, postId, filesToUpload, headers, privacy, nsfw, observer, fetchFn);
-  } else {
-    uploadProgressive(apiBaseUrl, filesToUpload, headers, title, privacy, nsfw, observer, fetchFn);
-  }
+  });
 }
+
+type Resolve = (results: UploadResult[]) => void;
 
 function uploadBatch(
   apiBaseUrl: string,
@@ -50,6 +60,7 @@ function uploadBatch(
   nsfw: boolean,
   observer: UploadObserver,
   fetchFn: typeof fetch,
+  resolve: Resolve,
 ): void {
   const results: UploadResult[] = [];
   observer.onProgress(0, 'Creating post...');
@@ -91,12 +102,14 @@ function uploadBatch(
 
         observer.onProgress(100, 'Done!');
         observer.onDone(results);
+        resolve(results);
       } catch (e) {
         const result: UploadResult = { type: 'error', message: 'Failed to upload: ' + (e as Error).message };
         results.push(result);
         observer.onResult(result, results.length - 1);
         observer.onProgress(100, 'Done!');
         observer.onDone(results);
+        resolve(results);
       }
     })
     .catch(error => {
@@ -105,6 +118,7 @@ function uploadBatch(
       observer.onResult(result, results.length - 1);
       observer.onProgress(100, 'Done!');
       observer.onDone(results);
+      resolve(results);
     });
 }
 
@@ -117,6 +131,7 @@ function uploadProgressiveAddToPost(
   nsfw: boolean,
   observer: UploadObserver,
   fetchFn: typeof fetch,
+  resolve: Resolve,
 ): void {
   const results: UploadResult[] = [];
   const totalItems = files.length;
@@ -127,6 +142,7 @@ function uploadProgressiveAddToPost(
     if (index >= files.length) {
       observer.onProgress(100, 'Done!');
       observer.onDone(results);
+      resolve(results);
       return;
     }
 
@@ -204,6 +220,7 @@ function uploadProgressive(
   nsfw: boolean,
   observer: UploadObserver,
   fetchFn: typeof fetch,
+  resolve: Resolve,
 ): void {
   const results: UploadResult[] = [];
   const totalItems = files.length;
@@ -214,6 +231,7 @@ function uploadProgressive(
     if (index >= files.length) {
       observer.onProgress(100, 'Done!');
       observer.onDone(results);
+      resolve(results);
       return;
     }
 
@@ -274,6 +292,7 @@ function uploadProgressive(
           if (isFirst) {
             observer.onProgress(100, 'Done!');
             observer.onDone(results);
+            resolve(results);
           } else {
             completedFiles++;
             observer.onProgress((completedFiles / totalItems) * 100, 'Uploaded ' + completedFiles + ' of ' + totalItems);
@@ -289,6 +308,7 @@ function uploadProgressive(
         if (isFirst) {
           observer.onProgress(100, 'Done!');
           observer.onDone(results);
+          resolve(results);
         } else {
           completedFiles++;
           uploadNextFile(index + 1);

@@ -360,4 +360,60 @@ describe('uploadToImgchest', () => {
     const headers = (fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>;
     expect(headers['Authorization']).toBe('Bearer my-token');
   });
+
+  test('resolves the returned promise with the full results array (alongside onDone)', async () => {
+    const postResponse = {
+      data: { id: 'abc', image_count: 1, images: [{ link: 'https://imgchest.com/i/img.png' }] },
+    };
+
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse(postResponse));
+
+    const observer = new RecordingUploadObserver();
+    const input = baseInput({
+      files: [new File(['x'], 'cat.png', { type: 'image/png' })],
+      anonymous: true,
+    });
+
+    const resolved = await uploadToImgchest(input, observer, fetchMock as unknown as typeof fetch);
+
+    expect(resolved).toEqual([
+      { type: 'success', url: 'https://imgchest.com/p/abc', isPost: true },
+      { type: 'success', url: 'https://imgchest.com/i/img.png' },
+    ]);
+    expect(observer.doneWith).toHaveLength(1);
+    expect(observer.doneWith[0]).toEqual(resolved);
+  });
+
+  test('resolves with the validation error array when files are invalid', async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    const observer = new RecordingUploadObserver();
+    const input = baseInput({
+      files: [new File(['x'], 'cat.txt', { type: 'text/plain' })],
+    });
+
+    const resolved = await uploadToImgchest(input, observer, fetchMock as unknown as typeof fetch);
+
+    expect(resolved).toHaveLength(1);
+    expect(resolved[0].type).toBe('error');
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(observer.doneWith[0]).toEqual(resolved);
+  });
+
+  test('rejects the returned promise on an unexpected throw', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(() => {
+      throw new Error('boom');
+    });
+
+    const observer = new RecordingUploadObserver();
+    const input = baseInput({
+      files: [new File(['x'], 'cat.png', { type: 'image/png' })],
+      anonymous: true,
+    });
+
+    await expect(
+      uploadToImgchest(input, observer, fetchMock as unknown as typeof fetch),
+    ).rejects.toThrow('boom');
+  });
 });

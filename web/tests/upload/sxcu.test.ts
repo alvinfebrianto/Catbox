@@ -196,4 +196,32 @@ describe('uploadToSxcu', () => {
       { type: 'success', url: 'https://sxcu.net/3.png' },
     ]);
   });
+
+  test('resolves the returned promise with the full results array (alongside onDone)', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ url: 'https://sxcu.net/1.png' }));
+
+    const observer = new RecordingUploadObserver();
+    const input = baseInput({ files: [new File(['x'], '1.png', { type: 'image/png' })] });
+
+    const resolved = await uploadToSxcu(input, observer, fetchMock as unknown as typeof fetch);
+
+    expect(resolved).toEqual([{ type: 'success', url: 'https://sxcu.net/1.png' }]);
+    expect(observer.doneWith).toHaveLength(1);
+    expect(observer.doneWith[0]).toEqual(resolved);
+  });
+
+  test('rejects the returned promise on an unexpected throw', async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    const throwingObserver = new RecordingUploadObserver();
+    throwingObserver.onProgress = () => {
+      throw new Error('boom');
+    };
+    const input = baseInput({ files: [new File(['x'], '1.png', { type: 'image/png' })] });
+
+    await expect(
+      uploadToSxcu(input, throwingObserver, fetchMock as unknown as typeof fetch),
+    ).rejects.toThrow('boom');
+  });
 });

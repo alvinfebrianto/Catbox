@@ -11,7 +11,9 @@ export function uploadToCatbox(
   input: CatboxUploadInput,
   observer: UploadObserver,
   fetchFn: typeof fetch,
-): void {
+): Promise<UploadResult[]> {
+  return new Promise<UploadResult[]>((resolve, reject) => {
+  try {
   const { apiBaseUrl, files, urls, authHeaders, title, description } = input;
   const proxyUrl = apiBaseUrl + '/upload/catbox';
   const headers = authHeaders ?? {};
@@ -80,6 +82,7 @@ export function uploadToCatbox(
   const finish = (): void => {
     observer.onProgress(100, 'Done!');
     observer.onDone(results);
+    resolve(results);
   };
 
   const createAlbum = (): void => {
@@ -144,4 +147,8 @@ export function uploadToCatbox(
   };
 
   processNext();
+  } catch (error) {
+    reject(error);
+  }
+  });
 }

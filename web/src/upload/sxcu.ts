@@ -29,7 +29,8 @@ export function uploadToSxcu(
   input: SxcuUploadInput,
   observer: UploadObserver,
   fetchFn: typeof fetch,
-): void {
+): Promise<UploadResult[]> {
+  return new Promise<UploadResult[]>((resolve, reject) => {
   const results: UploadResult[] = [];
   const totalFiles = input.files.length;
   let collectionId = '';
@@ -67,9 +68,10 @@ export function uploadToSxcu(
   const finish = (): void => {
     observer.onProgress(100, 'Done!');
     observer.onDone(results);
+    resolve(results);
   };
 
-  const delay = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
+  const delay = (ms: number): Promise<void> => new Promise(done => setTimeout(done, ms));
 
   const waitForRateLimit = async (): Promise<void> => {
     let waitSeconds = getWaitSeconds();
@@ -237,8 +239,9 @@ export function uploadToSxcu(
   };
 
   if (input.createCollection) {
-    void createCollection();
+    createCollection().catch(reject);
   } else {
-    void processNextBurst();
+    processNextBurst().catch(reject);
   }
+  });
 }

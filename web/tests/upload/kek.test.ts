@@ -252,4 +252,42 @@ describe('uploadToKek', () => {
     expect(observer.doneWith[0][0].type).toBe('error');
     expect((observer.doneWith[0][0] as { message?: string }).message).toContain('cat.png');
   });
+
+  test('resolves the returned promise with the full results array (alongside onDone)', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ filename: 'a.png' }));
+
+    const observer = new RecordingUploadObserver();
+    const input = baseInput({ files: [new File(['x'], 'cat.png', { type: 'image/png' })] });
+
+    const resolved = await uploadToKek(input, observer, fetchMock as unknown as typeof fetch);
+
+    expect(resolved).toEqual([{ type: 'success', url: 'https://i.kek.sh/a.png' }]);
+    expect(observer.doneWith).toHaveLength(1);
+    expect(observer.doneWith[0]).toEqual(resolved);
+  });
+
+  test('resolves with an empty array when there is nothing to upload', async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    const observer = new RecordingUploadObserver();
+
+    const resolved = await uploadToKek(baseInput(), observer, fetchMock as unknown as typeof fetch);
+
+    expect(resolved).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test('rejects the returned promise on an unexpected throw', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(() => {
+      throw new Error('boom');
+    });
+
+    const observer = new RecordingUploadObserver();
+    const input = baseInput({ files: [new File(['x'], 'cat.png', { type: 'image/png' })] });
+
+    await expect(
+      uploadToKek(input, observer, fetchMock as unknown as typeof fetch),
+    ).rejects.toThrow('boom');
+  });
 });

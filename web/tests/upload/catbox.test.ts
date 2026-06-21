@@ -168,4 +168,39 @@ describe('uploadToCatbox', () => {
       expect((init.headers as Record<string, string>).Authorization).toBe('Bearer t');
     }
   });
+
+  test('resolves the returned promise with the full results array (alongside onDone)', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(textResponse('https://files.catbox.moe/a.png'))
+      .mockResolvedValueOnce(textResponse('https://files.catbox.moe/b.png'));
+
+    const observer = new RecordingUploadObserver();
+    const input = baseInput({
+      files: [new File(['x'], 'cat.png', { type: 'image/png' })],
+      urls: ['https://example.com/remote.png'],
+    });
+
+    const resolved = await uploadToCatbox(input, observer, fetchMock as unknown as typeof fetch);
+
+    expect(resolved).toEqual([
+      { type: 'success', url: 'https://files.catbox.moe/a.png' },
+      { type: 'success', url: 'https://files.catbox.moe/b.png' },
+    ]);
+    expect(observer.doneWith).toHaveLength(1);
+    expect(observer.doneWith[0]).toEqual(resolved);
+  });
+
+  test('rejects the returned promise on an unexpected throw', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(() => {
+      throw new Error('boom');
+    });
+
+    const observer = new RecordingUploadObserver();
+    const input = baseInput({ files: [new File(['x'], 'cat.png', { type: 'image/png' })] });
+
+    await expect(
+      uploadToCatbox(input, observer, fetchMock as unknown as typeof fetch),
+    ).rejects.toThrow('boom');
+  });
 });

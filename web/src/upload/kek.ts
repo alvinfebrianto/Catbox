@@ -5,7 +5,9 @@ export function uploadToKek(
   input: KekUploadInput,
   observer: UploadObserver,
   fetchFn: typeof fetch,
-): void {
+): Promise<UploadResult[]> {
+  return new Promise<UploadResult[]>((resolve, reject) => {
+  try {
   const { apiBaseUrl, files, urls, authHeaders, apiKey, mature } = input;
   const proxyUrl = apiBaseUrl + '/upload/kek/posts';
   const headers: Record<string, string> = { ...authHeaders };
@@ -19,6 +21,7 @@ export function uploadToKek(
       const result: UploadResult = { type: 'error', message: validation.error || 'Invalid files' };
       observer.onResult(result, 0);
       observer.onDone([result]);
+      resolve([result]);
       return;
     }
   }
@@ -31,6 +34,7 @@ export function uploadToKek(
 
   if (queue.length === 0) {
     observer.onDone([]);
+    resolve([]);
     return;
   }
 
@@ -41,6 +45,7 @@ export function uploadToKek(
     if (index >= queue.length) {
       observer.onProgress(100, 'Done!');
       observer.onDone(results);
+      resolve(results);
       return;
     }
 
@@ -88,4 +93,8 @@ export function uploadToKek(
   };
 
   processNext(0);
+  } catch (error) {
+    reject(error);
+  }
+  });
 }
