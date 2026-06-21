@@ -145,6 +145,10 @@ describe('Catbox request shaping and validation', () => {
   });
 
   test('all error paths return JSON error envelope', async () => {
+    const origSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = ((fn: (...args: any[]) => void, _ms: number, ...args: any[]) =>
+      origSetTimeout(fn, 0, ...args)) as typeof globalThis.setTimeout;
+
     const fetch = vi.fn(async () => { throw new Error('Network failure'); });
 
     const formData = new FormData();
@@ -154,11 +158,13 @@ describe('Catbox request shaping and validation', () => {
     const req = new Request('http://localhost:3000/upload/catbox', { method: 'POST', body: formData });
     const response = await handleUploadRequest(req, makeDeps({ fetch }));
 
+    globalThis.setTimeout = origSetTimeout;
+
     expect(response).not.toBeNull();
     expect(response!.headers.get('Content-Type')).toBe('application/json');
     const body = await response!.json() as { error: string };
     expect(body.error).toBe('Network failure');
-  }, 60000);
+  });
 
   test('applies CORS headers on error responses', async () => {
     const formData = new FormData();
@@ -290,6 +296,10 @@ describe('kek request shaping and validation', () => {
   });
 
   test('network failure returns JSON error envelope with CORS', async () => {
+    const origSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = ((fn: (...args: any[]) => void, _ms: number, ...args: any[]) =>
+      origSetTimeout(fn, 0, ...args)) as typeof globalThis.setTimeout;
+
     const fetch = vi.fn(async () => { throw new Error('Network failure'); });
     const formData = new FormData();
     formData.append('file', new File(['content'], 'test.png', { type: 'image/png' }));
@@ -297,12 +307,14 @@ describe('kek request shaping and validation', () => {
     const req = new Request('http://localhost:3000/upload/kek/posts', { method: 'POST', body: formData });
     const response = await handleUploadRequest(req, kekDeps({ fetch, corsHeaders: { 'Access-Control-Allow-Origin': 'https://example.com' } }));
 
+    globalThis.setTimeout = origSetTimeout;
+
     expect(response).not.toBeNull();
     expect(response!.headers.get('Content-Type')).toBe('application/json');
     expect(response!.headers.get('Access-Control-Allow-Origin')).toBe('https://example.com');
     const body = await response!.json() as { error: string };
     expect(body.error).toBe('Network failure');
-  }, 60000);
+  });
 });
 
 describe('sxcu request shaping, rate limiting, and response shaping', () => {
