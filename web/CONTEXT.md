@@ -33,12 +33,16 @@ The deep module a host calls to perform one upload. Its interface is one functio
 _Avoid_: upload handler, request handler, endpoint, controller, route module
 
 **Upload sequencer**:
-A client-side module that orchestrates one provider's multi-file upload flow against our own proxy — request shaping, multi-file/URL looping, burst pacing, response parsing, and incremental result emission. One per provider: catbox, kek, sxcu, imgchest. Distinct from the provider proxy runtime (which talks to the upstream provider) and from a provider (which is the external service).
+A client-side module that orchestrates one provider's multi-file upload flow against our own proxy — request shaping, multi-file/URL looping, burst pacing, response parsing, incremental result emission, and completion. One per provider: catbox, kek, sxcu, imgchest. Its interface is `(input, observer, fetchFn) => Promise<UploadResult[]>`: the promise is the single completion signal (it resolves with the full results array); the observer carries only incremental events. Distinct from the provider proxy runtime (which talks to the upstream provider) and from a provider (which is the external service).
 _Avoid_: client provider module, upload handler, uploader
 
 **Upload observer**:
-The seam an upload sequencer emits events through — results, progress, rate-limit-wait, and completion. Implemented by the `ImageUploader` class in production (bridging to its rendering methods) and by a recording double in tests.
+The seam an upload sequencer emits *incremental* events through — per-result (`onResult`), progress (`onProgress`), and rate-limit-wait (`onRateLimitWait`). It carries no completion signal: completion is the sequencer's resolved promise, not an observer event. Implemented by the `ImageUploader` class in production (bridging to its rendering methods) and by a recording double in tests.
 _Avoid_: callback, event emitter, listener, handler
+
+**Sequencer completion**:
+The terminal signal of an upload sequencer — its promise resolving with the final `UploadResult[]`. Per-item upload failures are *data* in that array (`{ type: 'error', message }`); the flow that produced them **resolves**, because a partial upload is a completed flow, not a failed one. The promise **rejects** only for an unexpected exception the sequencer did not convert to per-item data (a bug), so the host can surface a real error instead of swallowing it. Replacing the former `observer.onDone` callback, which carried the same payload as the promise and was a redundant second completion signal.
+_Avoid_: done callback, finish handler, onDone, terminal callback
 
 **Upload input**:
 The plain, DOM-free contract object the `ImageUploader` class builds from form state and hands to an upload sequencer. One shape per provider. Carries everything the sequencer needs (files, URLs, options) with no DOM access.
