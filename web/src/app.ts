@@ -153,7 +153,7 @@ export class ImageUploader {
   }
 
   private bindEvents(): void {
-    this.form.addEventListener('submit', (e) => this.handleSubmit(e));
+    this.form.addEventListener('submit', (e) => { void this.handleSubmit(e).catch(() => {}); });
 
     this.providerSelect.addEventListener('change', () => {
       this.provider = this.providerSelect.value as Provider;
@@ -461,11 +461,18 @@ export class ImageUploader {
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   }
 
-  private handleSubmit(e: Event): void {
+  private async handleSubmit(e: Event): Promise<void> {
     e.preventDefault();
 
     if (this.files.length === 0 && !this.urlsInput.value.trim()) {
       this.showError('Please select at least one file or enter URLs');
+      return;
+    }
+
+    const postId = this.postIdInput.value.trim();
+    const anonymous = (document.getElementById('anonymous') as HTMLInputElement).checked;
+    if (postId && anonymous) {
+      this.showError('Cannot add images to anonymous posts. Anonymous posts do not support adding images after creation.');
       return;
     }
 
@@ -475,7 +482,6 @@ export class ImageUploader {
     this.progressDiv.style.display = 'block';
     this.progressFill.style.width = '0%';
 
-    const results: UploadResult[] = [];
     const urls = this.urlsInput.value.trim()
       ? this.urlsInput.value.split(',').map(u => u.trim())
       : [];
@@ -483,16 +489,16 @@ export class ImageUploader {
     try {
       switch (this.provider) {
         case 'catbox':
-          this.uploadToCatbox(urls);
+          await this.uploadToCatbox(urls);
           break;
         case 'sxcu':
-          this.uploadToSxcu(results);
+          await this.uploadToSxcu([]);
           break;
         case 'imgchest':
-          this.uploadToImgchest(results);
+          await this.uploadToImgchest([]);
           break;
         case 'kek':
-          this.uploadToKek(urls);
+          await this.uploadToKek(urls);
           break;
       }
     } catch (error) {
@@ -508,7 +514,7 @@ export class ImageUploader {
       onResult: (result, index) => this.addIncrementalResult(result, index),
       onProgress: (percent, label) => this.updateProgress(percent, label),
       onRateLimitWait,
-      onDone: (results) => this.displayResults(results, totalItems),
+      onDone: () => {},
     };
   }
 
@@ -534,7 +540,7 @@ export class ImageUploader {
     rateLimitNotice.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
-  private uploadToCatbox(urls: string[]): void {
+  private async uploadToCatbox(urls: string[]): Promise<void> {
     const input: CatboxUploadInput = {
       apiBaseUrl: this.apiBaseUrl,
       files: this.files,
@@ -545,11 +551,12 @@ export class ImageUploader {
       createAlbum: (document.getElementById('createAlbum') as HTMLInputElement).checked,
     };
     const totalItems = this.files.length + urls.length;
-    runCatboxSequencer(input, this.makeObserver(totalItems), window.fetch.bind(window));
+    const results = await runCatboxSequencer(input, this.makeObserver(totalItems), window.fetch.bind(window));
+    this.displayResults(results, totalItems);
   }
 
 
-  private uploadToKek(urls: string[]): void {
+  private async uploadToKek(urls: string[]): Promise<void> {
     const input: KekUploadInput = {
       apiBaseUrl: this.apiBaseUrl,
       files: this.files,
@@ -559,10 +566,11 @@ export class ImageUploader {
       mature: this.kekMatureCheckbox?.checked ?? false,
     };
     const totalItems = this.files.length + urls.length;
-    runKekSequencer(input, this.makeObserver(totalItems), window.fetch.bind(window));
+    const results = await runKekSequencer(input, this.makeObserver(totalItems), window.fetch.bind(window));
+    this.displayResults(results, totalItems);
   }
 
-  private uploadToSxcu(_results: UploadResult[]): void {
+  private async uploadToSxcu(_results: UploadResult[]): Promise<void> {
     const input: SxcuUploadInput = {
       apiBaseUrl: this.apiBaseUrl,
       files: this.files,
@@ -574,39 +582,32 @@ export class ImageUploader {
       private: (document.getElementById('sxcuPrivate') as HTMLInputElement).checked,
     };
 
-    runSxcuSequencer(
+    const totalItems = this.files.length;
+    const results = await runSxcuSequencer(
       input,
-      this.makeObserver(this.files.length, secondsRemaining => this.updateRateLimitNotice(secondsRemaining)),
+      this.makeObserver(totalItems, secondsRemaining => this.updateRateLimitNotice(secondsRemaining)),
       window.fetch.bind(window),
     );
+    this.displayResults(results, totalItems);
   }
 
 
-  private uploadToImgchest(_results: UploadResult[]): void {
-    const anonymous = (document.getElementById('anonymous') as HTMLInputElement).checked;
-    const postId = this.postIdInput.value.trim();
-
-    if (postId && anonymous) {
-      this.showError('Cannot add images to anonymous posts. Anonymous posts do not support adding images after creation.');
-      this.setLoading(false);
-      this.progressDiv.style.display = 'none';
-      return;
-    }
-
+  private async uploadToImgchest(_results: UploadResult[]): Promise<void> {
     const input: ImgchestUploadInput = {
       apiBaseUrl: this.apiBaseUrl,
       files: this.files,
       urls: [],
       authHeaders: this.getAuthHeaders(),
       title: this.titleInput.value,
-      postId,
-      anonymous,
+      postId: this.postIdInput.value.trim(),
+      anonymous: (document.getElementById('anonymous') as HTMLInputElement).checked,
       privacy: this.imgchestPrivacySelect?.value || 'hidden',
       nsfw: this.imgchestNsfwCheckbox?.checked ?? true,
       apiToken: this.imgchestApiKeyInput?.value.trim(),
     };
     const totalItems = this.files.length;
-    runImgchestSequencer(input, this.makeObserver(totalItems), window.fetch.bind(window));
+    const results = await runImgchestSequencer(input, this.makeObserver(totalItems), window.fetch.bind(window));
+    this.displayResults(results, totalItems);
   }
 
   private updateProgress(percent: number, text: string): void {

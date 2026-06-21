@@ -246,54 +246,77 @@ describe('ImageUploader', () => {
       expect(resultsContent.textContent).toContain('Please select at least one file or enter URLs');
     });
 
-    test('allows submission with URLs only', () => {
+    test('allows submission with URLs only', async () => {
       const urlsInput = document.getElementById('urls') as HTMLInputElement;
       urlsInput.value = 'http://example.com/image.png';
 
       let providerCalled = false;
-      (uploader as any).uploadToCatbox = () => { providerCalled = true; };
+      (uploader as any).uploadToCatbox = () => { providerCalled = true; return Promise.resolve([]); };
       (uploader as any).provider = 'catbox';
 
-      (uploader as any).handleSubmit({ preventDefault: () => {} });
+      await (uploader as any).handleSubmit({ preventDefault: () => {} });
 
       expect(providerCalled).toBe(true);
     });
 
-    test('routes to correct provider handler', () => {
+    test('routes to correct provider handler', async () => {
       const calls = { catbox: false, sxcu: false, imgchest: false };
 
-      (uploader as any).uploadToCatbox = () => { calls.catbox = true; };
-      (uploader as any).uploadToSxcu = () => { calls.sxcu = true; };
-      (uploader as any).uploadToImgchest = () => { calls.imgchest = true; };
+      (uploader as any).uploadToCatbox = () => { calls.catbox = true; return Promise.resolve([]); };
+      (uploader as any).uploadToSxcu = () => { calls.sxcu = true; return Promise.resolve([]); };
+      (uploader as any).uploadToImgchest = () => { calls.imgchest = true; return Promise.resolve([]); };
 
       const file = new File([''], 'test.png', { type: 'image/png' });
       (uploader as any).addFiles(createFileList([file]));
 
       (uploader as any).provider = 'catbox';
-      (uploader as any).handleSubmit({ preventDefault: () => {} });
+      await (uploader as any).handleSubmit({ preventDefault: () => {} });
       expect(calls.catbox).toBe(true);
 
       calls.catbox = false;
       (uploader as any).provider = 'sxcu';
-      (uploader as any).handleSubmit({ preventDefault: () => {} });
+      await (uploader as any).handleSubmit({ preventDefault: () => {} });
       expect(calls.sxcu).toBe(true);
 
       calls.sxcu = false;
       (uploader as any).provider = 'imgchest';
-      (uploader as any).handleSubmit({ preventDefault: () => {} });
+      await (uploader as any).handleSubmit({ preventDefault: () => {} });
       expect(calls.imgchest).toBe(true);
     });
 
-    test('disables upload button during submission', () => {
+    test('disables upload button during submission', async () => {
       const file = new File([''], 'test.png', { type: 'image/png' });
       (uploader as any).addFiles(createFileList([file]));
       const uploadBtn = document.getElementById('uploadBtn') as HTMLButtonElement;
 
       (uploader as any).uploadToImgchest = () => {
         expect(uploadBtn.disabled).toBe(true);
+        return Promise.resolve([]);
       };
 
-      (uploader as any).handleSubmit({ preventDefault: () => {} });
+      await (uploader as any).handleSubmit({ preventDefault: () => {} });
+    });
+
+    test('button stays disabled and progress visible while sequencer promise is pending, clears on resolution', async () => {
+      let resolvePromise!: (value: UploadResult[]) => void;
+      (uploader as any).uploadToImgchest = () => new Promise<UploadResult[]>(resolve => { resolvePromise = resolve; });
+
+      const file = new File([''], 'test.png', { type: 'image/png' });
+      (uploader as any).addFiles(createFileList([file]));
+
+      const uploadBtn = document.getElementById('uploadBtn') as HTMLButtonElement;
+      const progressDiv = document.getElementById('progress') as HTMLElement;
+
+      const submitPromise = (uploader as any).handleSubmit({ preventDefault: () => {} });
+
+      expect(uploadBtn.disabled).toBe(true);
+      expect(progressDiv.style.display).toBe('block');
+
+      resolvePromise([]);
+      await submitPromise;
+
+      expect(uploadBtn.disabled).toBe(false);
+      expect(progressDiv.style.display).toBe('none');
     });
   });
 
