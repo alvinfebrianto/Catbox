@@ -28,6 +28,14 @@ _Avoid_: retry strategy, backoff policy, rate-limit mode
 A runtime that wires the provider modules and engine to an HTTP entry point and supplies runtime dependencies (CORS origins, secrets, the rate-limit store, static assets). Three: the Node server, the Cloudflare Worker, and the Durable Object. A host no longer shapes upload requests or responses itself — that is the upload endpoint module's job.
 _Avoid_: runtime, server, adapter
 
+**Edge host**:
+The Cloudflare Worker. Receives all inbound upload requests. Routes catbox/kek directly to the upload endpoint module; forwards imgchest/sxcu to the rate-limit host via `RATE_LIMITER.get(id).fetch()`, injecting `CF-Connecting-IP`, `X-Origin`, and `Authorization` headers. Distinguished from the rate-limit host because it has no rate-limit state and no SQLite storage.
+_Avoid_: worker, entry point, request receiver
+
+**Rate-limit host**:
+The Durable Object (class `RateLimiter`). Receives imgchest/sxcu requests forwarded by the edge host — one instance per client IP per ADR-0001 atomicity reasoning. Owns a `DurableObjectRateLimitStore` backed by SQLite. Calls the upload endpoint module with engine+store wired. Distinguished from the edge host because it owns per-IP rate-limit state, SQLite persistence, and the engine inside the DO.
+_Avoid_: DO, rate limiter, durable object
+
 **Upload endpoint module**:
 The deep module a host calls to perform one upload. Its interface is one function — `handleUploadRequest(request, deps): Promise<Response>` — and nothing else. It owns route matching, request shaping (form-data reading, token resolution, validation), the provider/engine call, and response shaping (status normalization, the JSON error envelope, CORS header projection, rate-limit header projection). The three hosts each reduce to a single call to it, plus their own runtime wiring (static assets in Node, the DO forwarding boundary and `X-Origin`/token injection in the Worker, per-IP `idFromName` and engine-in-DO atomicity in the Durable Object per ADR-0001).
 _Avoid_: upload handler, request handler, endpoint, controller, route module
