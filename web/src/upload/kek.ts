@@ -1,4 +1,5 @@
-import { UploadResult, validateKekFiles } from '../types';
+import { validateProviderFiles } from '../provider-capabilities';
+import { UploadResult } from '../types';
 import { KekUploadInput, UploadObserver } from './contracts';
 
 export function uploadToKek(
@@ -16,7 +17,7 @@ export function uploadToKek(
   }
 
   if (files.length > 0) {
-    const validation = validateKekFiles(files);
+    const validation = validateProviderFiles(files, 'kek');
     if (!validation.ok) {
       const result: UploadResult = { type: 'error', message: validation.error || 'Invalid files' };
       observer.onResult(result, 0);

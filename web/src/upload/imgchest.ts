@@ -1,4 +1,5 @@
-import { UploadResult, validateImgchestFiles } from '../types';
+import { getAnonymousLimit, validateProviderFiles } from '../provider-capabilities';
+import { UploadResult } from '../types';
 import { ImgchestUploadInput, UploadObserver } from './contracts';
 
 export function uploadToImgchest(
@@ -15,7 +16,7 @@ export function uploadToImgchest(
       }
 
       if (files.length > 0) {
-        const validation = validateImgchestFiles(files);
+        const validation = validateProviderFiles(files, 'imgchest');
         if (!validation.ok) {
           const result: UploadResult = { type: 'error', message: validation.error || 'Invalid files' };
           observer.onResult(result, 0);
@@ -26,7 +27,7 @@ export function uploadToImgchest(
 
       let filesToUpload = files.slice();
       if (anonymous) {
-        filesToUpload = filesToUpload.slice(0, 20);
+        filesToUpload = filesToUpload.slice(0, getAnonymousLimit('imgchest'));
       }
 
       if (filesToUpload.length === 0) {

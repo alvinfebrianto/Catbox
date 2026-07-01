@@ -148,61 +148,13 @@ export const MAX_IMGCHEST_IMAGES_PER_REQUEST = 20;
 
 export const MAX_TOTAL_SIZE = 100 * 1024 * 1024;
 
-export const IMGCHEST_MAX_FILE_SIZE = 30 * 1024 * 1024;
 export const IMGCHEST_ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.mp4'];
 
-export const KEK_MAX_FILE_SIZE = 50 * 1024 * 1024;
 export const KEK_ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
 
 export interface FileValidationResult {
   ok: boolean;
   error?: string;
-}
-
-export function validateImgchestFiles(files: File[]): FileValidationResult {
-  if (files.length === 0) {
-    return { ok: false, error: 'No files provided' };
-  }
-
-  for (const f of files) {
-    if (f.size <= 0) {
-      return { ok: false, error: 'Empty file' };
-    }
-
-    if (f.size > IMGCHEST_MAX_FILE_SIZE) {
-      return { ok: false, error: `File too large: ${f.name} (max 30MB for Imgchest)` };
-    }
-
-    const ext = '.' + (f.name.split('.').pop() || '').toLowerCase();
-    if (!IMGCHEST_ALLOWED_EXTENSIONS.includes(ext)) {
-      return { ok: false, error: `Unsupported file type for Imgchest: ${f.name}. Only jpg, jpeg, png, gif, webp, and mp4 are allowed.` };
-    }
-  }
-
-  return { ok: true };
-}
-
-export function validateKekFiles(files: File[]): FileValidationResult {
-  if (files.length === 0) {
-    return { ok: false, error: 'No files provided' };
-  }
-
-  for (const f of files) {
-    if (f.size <= 0) {
-      return { ok: false, error: 'Empty file' };
-    }
-
-    if (f.size > KEK_MAX_FILE_SIZE) {
-      return { ok: false, error: `File too large: ${f.name} (max 50MB for kek)` };
-    }
-
-    const ext = '.' + (f.name.split('.').pop() || '').toLowerCase();
-    if (!KEK_ALLOWED_EXTENSIONS.includes(ext)) {
-      return { ok: false, error: `Unsupported file type for kek: ${f.name}. Only jpg, jpeg, png, gif, and webp are allowed.` };
-    }
-  }
-
-  return { ok: true };
 }
 
 export function getBearerToken(request: Request): string | null {
