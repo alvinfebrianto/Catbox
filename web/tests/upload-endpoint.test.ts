@@ -55,20 +55,20 @@ describe('Catbox request shaping and validation', () => {
     expect(await response!.text()).toBe('https://files.catbox.moe/url123.png');
   });
 
-  test('rejects file too large', async () => {
+  test('allows catbox files above the old generic 50MB cap', async () => {
+    const fetch = vi.fn(async () => new Response('https://files.catbox.moe/large.png', { status: 200 }));
     const formData = new FormData();
     formData.append('reqtype', 'fileupload');
-    const bigFile = new File(['x'.repeat(51 * 1024 * 1024)], 'huge.png', { type: 'image/png' });
-    formData.append('fileToUpload', bigFile);
+    const fileAboveOldGenericCap = new File(['x'.repeat(51 * 1024 * 1024)], 'large.png', { type: 'image/png' });
+    formData.append('fileToUpload', fileAboveOldGenericCap);
 
     const req = new Request('http://localhost:3000/upload/catbox', { method: 'POST', body: formData });
-    const response = await handleUploadRequest(req, makeDeps());
+    const response = await handleUploadRequest(req, makeDeps({ fetch }));
 
     expect(response).not.toBeNull();
-    expect(response!.status).toBe(400);
-    expect(response!.headers.get('Content-Type')).toBe('application/json');
-    const body = await response!.json() as { error: string };
-    expect(body.error).toContain('File too large');
+    expect(response!.status).toBe(200);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(await response!.text()).toBe('https://files.catbox.moe/large.png');
   });
 
   test('rejects disallowed file extension', async () => {

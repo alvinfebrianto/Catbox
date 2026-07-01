@@ -2,7 +2,7 @@ import { CatboxUploadInput, CatboxRequestType, CATBOX_REQUEST_TYPES } from '../p
 import { KekUploadInput } from '../providers/kek';
 import { SxcuUploadInput } from '../providers/sxcu';
 import { ImgchestUploadInput } from '../providers/imgchest';
-import { validateFiles, validateKekFiles, validateImgchestFiles } from '../types';
+import { validateProviderFiles } from '../provider-capabilities';
 
 // ── Catbox reader (relocated from providers/catbox) ──
 
@@ -155,7 +155,7 @@ export async function readCatboxRequest(formData: FormData): Promise<CatboxReque
   if (input.reqtype === 'fileupload') {
     const entries = Array.isArray(input.fileToUpload) ? input.fileToUpload : [input.fileToUpload];
     const files = entries.filter((f): f is File => f instanceof File);
-    const validation = validateFiles(files);
+    const validation = validateProviderFiles(files, 'catbox');
     if (!validation.ok) {
       return { ok: false, error: validation.error! };
     }
@@ -200,7 +200,7 @@ export async function readKekRequest(
 
   if (input.files && input.files.length > 0) {
     const files = input.files.filter((f): f is File => f instanceof File);
-    const validation = validateKekFiles(files);
+    const validation = validateProviderFiles(files, 'kek');
     if (!validation.ok) {
       return { ok: false, error: validation.error! };
     }
@@ -227,7 +227,7 @@ export async function readSxcuRequest(
 ): Promise<SxcuRequestShaping> {
   if (type === 'file') {
     const files = formData.getAll('file').filter((f): f is File => f instanceof File);
-    const validation = validateFiles(files);
+    const validation = validateProviderFiles(files, 'sxcu');
     if (!validation.ok) {
       return { ok: false, error: validation.error! };
     }
@@ -272,7 +272,7 @@ export async function readImgchestRequest(
   }
 
   const images = formData.getAll('images[]').filter((f): f is File => f instanceof File);
-  const validation = validateImgchestFiles(images);
+  const validation = validateProviderFiles(images, 'imgchest');
   if (!validation.ok) {
     return { ok: false, error: validation.error! };
   }

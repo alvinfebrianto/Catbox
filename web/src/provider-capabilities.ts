@@ -1,7 +1,8 @@
 import type { FileValidationResult, Provider } from './types';
-import { MAX_FILE_COUNT, MAX_TOTAL_SIZE } from './types';
+import { MAX_TOTAL_SIZE } from './types';
 
 const MB = 1024 * 1024;
+const DEFAULT_MAX_FILE_COUNT = 50;
 
 export type { Provider };
 
@@ -137,7 +138,7 @@ export function validateProviderFiles(
   overrides: ValidationOverrides = {},
 ): FileValidationResult {
   const capabilities = getCapabilities(provider);
-  const maxFiles = overrides.maxFiles ?? MAX_FILE_COUNT;
+  const maxFiles = overrides.maxFiles ?? DEFAULT_MAX_FILE_COUNT;
   const maxTotal = overrides.maxTotal ?? MAX_TOTAL_SIZE;
   const maxEach = overrides.maxEach ?? capabilities.maxFileSize;
 
